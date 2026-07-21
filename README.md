@@ -1,13 +1,15 @@
 # Remote Browser Bridge
 
-![version](https://img.shields.io/badge/version-1.5.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.8.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
-让 **CodeNext**（云端 IDE / 容器）通过一个 Chrome 扩展**远程操控你本地的浏览器**。
+让 **CodeNext**（云端 IDE / 容器）或 **AI Agent** 通过一个 Chrome 扩展**远程操控你本地的浏览器**。
 纯 HTTP 长轮询，无需 WebSocket；扩展**只操控名为 `Remote Control` 的标签组**，其它标签页完全不受影响。
 
-> Drive your local Chrome from a cloud IDE (CodeNext) through a small MV3 extension + a
-> zero-dependency Node bridge. HTTP long-polling only. The extension touches **only** tabs
-> inside a tab group named `Remote Control`.
+> Drive your local Chrome from a cloud IDE (CodeNext) or an AI agent, through a small MV3
+> extension + a zero-dependency Node bridge. HTTP long-polling only. The extension touches
+> **only** tabs inside a tab group named `Remote Control`.
+
+> 💡 **一句话看懂**：算力在云端、浏览器在本地。它把云端的代码 / AI Agent 引到你**本地那个已经登录好的真实浏览器**上——用**你的会话、你的 IP、你的指纹**去操作网页，而不是在云端另开一个一无所有的浏览器。
 
 ---
 
@@ -27,25 +29,62 @@
 
 ---
 
-## 架构
+## 为什么有价值
+
+它的价值不在"能操控浏览器"（Puppeteer / Playwright 都能），而在**它操控的是哪一个浏览器**：你桌面上那个**已经登录、带着真实 cookie / IP / 指纹**的 Chrome。流经这条通道的是"**你的浏览器身份**"，不是机器访问。
+
+对照常见方案：
+
+| 维度 | **本方案** | VNC / RDP | Headless（云端 Puppeteer） |
+|---|---|---|---|
+| 谁操控谁 | 云端代码 / Agent → **操控你本地浏览器** | 你看 / 控远程机器的屏幕 | 云端开一个全新浏览器 |
+| 登录态 / 2FA | ✅ 现成会话，无需重新登录 | ✅（但在远程机器上） | ❌ 需脚本登录、撞 2FA |
+| IP / 指纹 | ✅ 你的住宅 IP + 真实指纹，天然过风控 | 远程机器的 | ❌ 数据中心 IP 易被标记 |
+| 给代码 / Agent 调用 | ✅ 结构化 API + MCP | ❌ 只有像素 | ✅ |
+| 人在环内 | ✅ 你看得见、能随时接管 | ✅ 但纯手动 | ❌ |
+| 暴露面 | 极窄：只有一个标签组 | 整台机器 | —— |
+| 网络穿透 | ✅ 长轮询过反代，无需入站端口 / VPN | 需端口 / 隧道 | 云端本地 |
+
+**适合**：用你登录态操作网页的个人自动化；登录墙背后的数据读取；需要偶尔盯着 / 接管的半自动流程；给云端 AI Agent 一双"用你浏览器的手"。
+
+**不适合**：大规模、无人值守地爬公开数据（用 headless 集群）；或"看 / 操作那台远程机器本身"（用 VNC / RDP）。
+
+---
+
+## 架构与技术原理
+
+它**不是把某台机器反代给你**，而是一条**反向发起、被收窄到"执行浏览器动作"这一个能力的控制隧道**。关键点：云端**够不到**你桌面（你在 NAT / 防火墙后、没有公网 IP），所以**由你本地的扩展主动往外拨**、挂住一个长轮询，指令再顺着这条已开的出站连接推回来——和反向 SSH 隧道 / `ngrok` / webhook 中继是同一个思想。
 
 ```
- 你的本地 Chrome                      CodeNext 容器
-┌────────────────────┐   HTTP 长轮询   ┌──────────────────────────┐
-│ 扩展 (background)   │ ◀───────────── │ server.js  (bridge 服务)  │
-│  执行指令，仅操控    │ ─────────────▶ │  控制台看板 + REST API     │
-│  "Remote Control"   │                └───────────┬──────────────┘
-│  标签组             │                            │
-│ 扩展 (content 中继) │                ┌───────────▼──────────────┐
-│  注入到控制台页面    │                │ runner.js  (自动化引擎)    │
-└────────────────────┘                │  + 你的脚本 / JSON 步骤     │
-                                       └──────────────────────────┘
+        本地（你的桌面）                          云端（CodeNext 容器）
+ ┌────────────────────────┐              ┌────────────────────────────────┐
+ │  Chrome + 扩展          │  ① 出站长轮询   │  bridge 服务（会合点/队列/REST） │
+ │   background（执行器）   │─────────────▶│                                │
+ │   content（中继，注入到  │    HTTPS      │  runner / MCP / 控制台          │
+ │    控制台页面）          │◀─────────────│   ② POST /api/command（入队）   │
+ └────────────┬───────────┘  ③ 指令顺着挂着  └────────────────┬───────────────┘
+              │              的 poll 推回本地                  │
+              ▼   （经 CodeNext 自带反代 /_/port/3006/ 中转）    │
+      在 Remote Control 标签组里执行 → 结果 POST /api/result 回传
 ```
+
+**① 传输：HTTP 长轮询（不用 WebSocket）** — 扩展 `POST /api/connect` 拿到 `browserId`，再 `GET /api/poll` 被服务器挂住最多 25 秒：有指令立即返回，否则空返回再轮。云端 `POST /api/command` 会在服务端阻塞，直到扩展 poll 到 → 执行 → `POST /api/result` 回填才返回——对调用方看起来就是一次同步 RPC。选长轮询而非 WS，是因为纯 GET / POST 能干净地穿过任意 HTTP 反代（CodeNext 的 `/_/port/`）和公司代理，无需 upgrade 协商。**在这儿"能穿透"是特性，不是缺陷。**
+
+**② 方向反转做 NAT 穿透** — 云端拨不进你桌面，于是本地扩展出站发起 + 挂 poll；控制方向（云 → 本地）跑在这条**由本地发起**的连接上。
+
+**③ 注入控制台页 → 顺带过掉外层鉴权** — 中继 `content.js` 只在 bridge 控制台页激活（靠注入的 `<meta name="remote-bridge-console">` 识别）。跑在那个页面里，它的 `fetch` 与 bridge 服务**同源**，自动带上 CodeNext 的登录 cookie，于是能**透明地过掉 CodeNext 自己的鉴权代理**（否则跨域会被拦）。
+
+**④ 执行路径** — 中继（页面）→ `chrome.runtime.sendMessage` → background service worker → 用 `chrome.scripting.executeScript`（DOM 操作 / ref 快照 / canvas·网络钩子跑在 **MAIN 世界**）、`chrome.tabs`、`chrome.cookies`、`chrome.tabGroups` 落地，**只碰 `Remote Control` 标签组**。
+
+**⑤ 两层鉴权** — 外层是 CodeNext 自己的登录代理（`/_/port/`），内层是我们每个 `/api/*` 的 Bearer token（已内嵌进控制台页，自动携带）。
+
+### 代码结构
 
 - **`extension/`** — Chrome MV3 扩展（解压源码，可直接"加载已解压的扩展"）
-- **`server/server.js`** — bridge 服务：控制台页面 + REST API（零依赖，纯 Node）
+- **`server/server.js`** — bridge 服务：会合点 + REST API + 控制台看板（零依赖）
 - **`server/runner.js`** — 通用自动化引擎（`Bridge` 类 + CLI）
-- **`mcp/server.js`** — 零依赖 MCP server，给 AI Agent 调用（[说明](mcp/README.md)）
+- **`server/notify.js`** — 钉钉通知（零依赖）
+- **`mcp/server.js`** — MCP server，给 AI Agent 调用（[说明](mcp/README.md)）
 - **`examples/`** — 通用示例（[说明与 API 参考](examples/README.md)）
 
 ---

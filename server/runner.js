@@ -216,6 +216,54 @@ class Bridge {
   getByPlaceholder(placeholder, exact) { return this.locator({ placeholder, exact: !!exact }); }
   getByTestId(testid) { return this.locator({ testid }); }
 
+  // ── 网络控制（等待空闲 / mock / abort，作用于 fetch）──
+  // 等待连续 idleMs 内在途请求为 0（SPA 跳转/异步加载后用）
+  async waitForNetworkIdle(opts = {}) {
+    const timeout = opts.timeout || 15000;
+    return this.exec('wait_network_idle', { idleMs: opts.idleMs || 500, timeout }, timeout + 5000);
+  }
+  // 路由匹配 fetch：action='abort' 让请求失败；或 {status,body,contentType,method,regex} 直接 mock 响应
+  async route(urlPattern, action) {
+    let route;
+    if (action === 'abort') {
+      route = { pat: urlPattern, kind: 'abort' };
+    } else {
+      action = action || {};
+      let body = action.body;
+      if (body != null && typeof body !== 'string') body = JSON.stringify(body);
+      route = {
+        pat: urlPattern, kind: 'fulfill',
+        status: action.status || 200,
+        body: body != null ? body : '',
+        contentType: action.contentType || 'application/json',
+        method: action.method, isRegex: !!action.regex,
+      };
+    }
+    return this.exec('route_add', { route });
+  }
+  async clearRoutes() { return this.exec('route_clear'); }
+
+  // ── Web-first 断言（自动重试到超时，Playwright 式 expect）──
+  // 用法：await bridge.expect(bridge.getByText('结果')).toBeVisible()
+  expect(locator) {
+    const self = this;
+    const spec = (locator && locator.spec) ? locator.spec : locator;
+    const run = (op, args, opts) => {
+      const t = (opts && opts.timeout) || 5000;
+      return self.exec('locator_act', { spec, op, args: args || {}, opts: { timeout: t } }, t + 5000)
+        .then((r) => { if (r && r.error) throw new Error(r.error); return r; });
+    };
+    return {
+      toBeVisible: (o) => run('expectVisible', {}, o),
+      toBeHidden: (o) => run('expectHidden', {}, o),
+      toHaveText: (text, o) => run('expectText', { text }, o),
+      toContainText: (text, o) => run('expectContainText', { text }, o),
+      toHaveValue: (value, o) => run('expectValue', { value }, o),
+      toBeChecked: (o) => run('expectChecked', { checked: true }, o),
+      notToBeChecked: (o) => run('expectChecked', { checked: false }, o),
+    };
+  }
+
   async screenshot() {
     return this.exec('screenshot');
   }

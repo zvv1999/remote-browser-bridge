@@ -44,7 +44,8 @@ exports.main = async (bridge) => {
 | 页面 | `scroll(x,y)` · `scrollToBottom()` · `scrollIntoView(sel)` · `dismissOverlays()` |
 | 等待 | `waitForText(text,timeout?)` · `waitForSelector(sel,timeout?)` · `waitUntil(fn,opts?)` · `sleep(ms)` |
 | 信息 | `getPageInfo(includeCookies?)` · `getCookies(url?)` · `getLinks()` · `checkRisk()` |
-| 网络 | `networkIntercept()` · `networkRequests()` · `networkFetch(url,method?,headers?,body?)` · `networkClear()` |
+| 网络 | `networkIntercept()` · `networkRequests()` · `networkFetch(url,method?,headers?,body?)` · `networkClear()` · `waitForNetworkIdle(opts?)` · `route(pat, 'abort' \| {status,body,contentType,method,regex})` · `clearRoutes()` |
+| 断言（自动重试） | `expect(locator).toBeVisible/toBeHidden/toHaveText/toContainText/toHaveValue/toBeChecked/notToBeChecked` |
 | 标签 | `listTabs()` · `setTarget(id)`(后台目标) · `switchTab(id)`(切前台) · `closeTab(id)` · `createGroup()` · `listControlledTabs()` |
 | iframe | `listFrames()`（配合各方法的 `frameId` 参数在指定 iframe 内操作） |
 | 执行 | `evaluate(code)` |
@@ -53,6 +54,8 @@ exports.main = async (bridge) => {
 
 也可以直接用底层调用：`bridge.exec('action_name', { ...params }, timeoutMs)`。
 
+> **网络控制 + 断言（补 Playwright）**：`await bridge.waitForNetworkIdle()` 等 SPA 请求都结束；`await bridge.route('/api/list', { body: {items:[]} })` 直接 mock 掉某个接口的响应（或 `bridge.route('/track', 'abort')` 拦掉某请求）；`await bridge.expect(bridge.getByText('成功')).toBeVisible()` 自动重试断言。路由作用于页面的 `fetch`。
+>
 > **定位器 + 自动等待（写脚本更稳）**：`getByRole/getByText/getByLabel/getByPlaceholder/getByTestId` 或 `locator({...})` 返回一个可链式操作的句柄，动作前**自动等待**元素出现→可见→可用（免去手动 `sleep`/`waitFor`），并**穿透开放 Shadow DOM**。例：`await bridge.getByRole('button','登录').click()`、`await bridge.getByLabel('用户名').fill('admin')`、`await bridge.locator({text:'结果'}).waitFor()`。`check` 是幂等的（不会把已勾选的切掉）。
 >
 > **Ref 快照（给 LLM/Agent 用）**：`snapshotRefs()` 返回带编号的元素清单（`[e1] link "登录"`、`[e3] textbox "用户名"`…）和结构化 `elements` 数组；随后用 `clickRef('e3')` / `typeRef('e5','文本')` 按编号操作，无需 CSS 选择器。比把原始 HTML 喂给模型更稳、更省 token。页面变化后 ref 会失效，重新 `snapshotRefs()` 即可。

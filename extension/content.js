@@ -74,7 +74,7 @@ function startRelay(token) {
       const res = await fetch(`${baseUrl}/api/connect`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ client: 'chrome-extension-relay', version: '1.9.0', token }),
+        body: JSON.stringify({ client: 'chrome-extension-relay', version: '1.10.0', token }),
       });
       const text = await res.text();
       log('connect 响应: ' + text.substring(0, 200));

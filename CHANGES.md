@@ -1,5 +1,14 @@
 # 变更记录
 
+## v1.10.0 — 网络控制 + Web-first 断言（继续补 Playwright）
+
+- **等待网络空闲**：`bridge.waitForNetworkIdle({idleMs?,timeout?})` —— 连续 idleMs 内在途请求为 0 才返回，SPA 跳转/异步加载后很好用（`fetch`/`XHR` 都计数）。
+- **请求路由 mock/abort（作用于 `fetch`）**：`bridge.route(pat, 'abort')` 拦掉匹配请求；`bridge.route(pat, {status,body,contentType,method,regex})` 直接返回自定义响应（`body` 传对象自动 JSON 序列化）。`bridge.clearRoutes()` 清空。适合"mock 掉我应用调的那个接口"。
+- **Web-first 断言**：`bridge.expect(locator).toBeVisible()/toBeHidden()/toHaveText()/toContainText()/toHaveValue()/toBeChecked()/notToBeChecked()`，**自动重试到超时**（默认 5s），失败抛错报实际值。
+- 底层：`networkIntercept` 扩展为带在途计数 + 路由；新增 `route_add/route_clear/wait_network_idle` 动作与 `locatorAct` 的 `expect*` 分支。
+- 已**无头验证**网络层：mock 返回自定义 JSON、abort 让 fetch 失败、按 method 精确路由（GET 放行/POST 拦截）、在途计数 0→1→0、`waitNetworkIdle` 正确等到空闲及超时。
+- 限制：路由只作用于页面的 `fetch`（不含 XHR、图片/CSS/导航等资源请求）；要完整网络路由需 `chrome.debugger`（未引入）。
+
 ## v1.9.0 — 定位器 + 自动等待（向 Playwright 手感看齐）
 
 补上"自动化不如 Playwright"最关键的两块——**自动等待**和**语义定位器**，还顺带做了 **Shadow DOM 穿透**，都在扩展内、零新权限。

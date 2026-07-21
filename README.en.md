@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-![version](https://img.shields.io/badge/version-1.9.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.10.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 Drive your **local** Chrome from a cloud IDE (**CodeNext**) or an **AI agent**, through a small
 MV3 extension + a zero-dependency Node bridge. HTTP long-polling only, no WebSocket. The
@@ -38,8 +38,10 @@ is left alone.
   from `.bridge-token` — so it’s invisible to you but strangers are rejected.
 - 🧰 **40+ actions** — navigate, click/type/press-key, read DOM/text/HTML, wait for element/text,
   scroll, dismiss overlays, cookies, operate inside `iframe`s, run JS.
-- 🌐 **Network capture + page-context requests** — intercept `fetch`/`XHR` in the page’s **main
-  world**, or send requests with the page’s own credentials (`networkFetch`).
+- 🌐 **Network control** — capture `fetch`/`XHR`, `waitForNetworkIdle()`, `route()` to mock/abort
+  API responses, or send requests with the page’s own credentials (`networkFetch`).
+- ✅ **Web-first assertions** — `expect(locator).toBeVisible()/toHaveText()/toBeChecked()…` that
+  auto-retry until timeout.
 - 🎨 **Canvas text extraction** — capture canvas-drawn text and rebuild it into readable text (for
   pages that render body content on a canvas).
 - 📊 **Console dashboard** — Tabs / Screenshot / Network / Cookies panels, quick buttons + a

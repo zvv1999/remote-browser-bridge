@@ -355,6 +355,18 @@ async function executeAction(action, params) {
       const result = await executeInTab(tab.id, networkClear, [], frameId, 'MAIN');
       return result;
     }
+    // 请求路由（mock/abort，作用于 fetch）
+    case 'route_add': {
+      await executeInTab(tab.id, networkIntercept, [], frameId, 'MAIN'); // 确保拦截已安装
+      return await executeInTab(tab.id, routeAdd, [params.route || {}], frameId, 'MAIN');
+    }
+    case 'route_clear':
+      return await executeInTab(tab.id, routeClear, [], frameId, 'MAIN');
+    // 等待网络空闲
+    case 'wait_network_idle': {
+      await executeInTab(tab.id, networkIntercept, [], frameId, 'MAIN'); // 确保在途计数生效
+      return await executeInTab(tab.id, waitNetworkIdle, [params.idleMs || 500, params.timeout || 15000], frameId, 'MAIN');
+    }
 
     // ── DOM 操作（支持可选 frameId）──
     case 'click':
@@ -966,15 +978,26 @@ async function locatorAct(spec, op, args, opts) {
   };
   const readOnly = (op === 'getText' || op === 'getValue' || op === 'getAttribute');
 
+  const assertConds = { expectText: 1, expectContainText: 1, expectValue: 1, expectChecked: 1 };
   let lastReason = 'not found';
   while (Date.now() < deadline) {
     const el = pick(resolveAll());
-    if (op === 'waitFor') {
-      const state = args.state || 'visible';
+    if (op === 'waitFor' || op === 'expectVisible' || op === 'expectHidden') {
+      const state = op === 'expectVisible' ? 'visible' : op === 'expectHidden' ? 'hidden' : (args.state || 'visible');
       if (state === 'attached') { if (el) return { ok: true, state }; lastReason = 'not attached'; }
       else if (state === 'detached') { if (!el) return { ok: true, state }; lastReason = 'still attached'; }
       else if (state === 'hidden') { if (!el || visReason(el)) return { ok: true, state }; lastReason = 'still visible'; }
       else { if (el && !visReason(el)) return { ok: true, state }; lastReason = el ? visReason(el) : 'not found'; }
+    } else if (assertConds[op]) {
+      if (el) {
+        let ok = false, cur;
+        if (op === 'expectText') { cur = txt(el); ok = cur === String(args.text == null ? '' : args.text).trim(); }
+        else if (op === 'expectContainText') { cur = txt(el); ok = cur.indexOf(args.text) !== -1; }
+        else if (op === 'expectValue') { cur = (el.value != null ? el.value : ''); ok = cur === String(args.value == null ? '' : args.value); }
+        else if (op === 'expectChecked') { cur = !!el.checked; ok = cur === (args.checked !== false); }
+        if (ok) return { ok: true, actual: cur };
+        lastReason = 'got: ' + JSON.stringify(cur);
+      } else lastReason = 'not found';
     } else if (el) {
       const reason = readOnly ? null : actReason(el);
       if (!reason) { if (!readOnly) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} } return doAction(el); }
@@ -982,7 +1005,7 @@ async function locatorAct(spec, op, args, opts) {
     } else { lastReason = 'not found'; }
     await new Promise(r => setTimeout(r, 100));
   }
-  return { error: `等待超时 (${timeout}ms) op=${op} locator=${JSON.stringify(spec)} — 最后状态: ${lastReason}` };
+  return { error: `断言/等待超时 (${timeout}ms) op=${op} locator=${JSON.stringify(spec)} — 最后状态: ${lastReason}` };
 }
 
 // ══════════════════════════════════════
@@ -1159,19 +1182,51 @@ function clickByText(text, tagName) {
 
 // 注入 fetch/XHR monkey-patch，开始捕获所有请求
 function networkIntercept() {
+  // 路由与在途计数即使已安装也要保证存在（供 route/waitNetworkIdle 使用）
+  if (!window.__bridgeNetRoutes) window.__bridgeNetRoutes = [];
+  if (typeof window.__bridgeNetInflight !== 'number') window.__bridgeNetInflight = 0;
   if (window.__bridgeNetworkInterceptActive) return { ok: true, already: true, captured: (window.__bridgeNetworkCaptured || []).length };
   window.__bridgeNetworkCaptured = [];
   window.__bridgeNetworkInterceptActive = true;
 
-  // Monkey-patch fetch
+  const matchRoute = (url, method) => {
+    const routes = window.__bridgeNetRoutes || [];
+    for (const r of routes) {
+      if (r.method && r.method.toUpperCase() !== method.toUpperCase()) continue;
+      let hit = false;
+      if (r.isRegex) { try { hit = new RegExp(r.pat).test(url); } catch (e) { hit = false; } }
+      else hit = url.indexOf(r.pat) !== -1;
+      if (hit) return r;
+    }
+    return null;
+  };
+
+  // Monkey-patch fetch（支持 abort / fulfill 路由 + 在途计数）
   const origFetch = window.fetch;
   window.fetch = function (input, init) {
     const url = typeof input === 'string' ? input : (input.url || input.href || '');
     const method = (init && init.method) || 'GET';
     const reqHeaders = (init && init.headers) || {};
     const reqBody = (init && init.body) || null;
+
+    const route = matchRoute(url, method);
+    if (route) {
+      if (route.kind === 'abort') {
+        window.__bridgeNetworkCaptured.push({ url, method, aborted: true, at: Date.now() });
+        return Promise.reject(new TypeError('Failed to fetch (bridge route abort)'));
+      }
+      if (route.kind === 'fulfill') {
+        const status = route.status || 200;
+        const headers = { 'content-type': route.contentType || 'application/json' };
+        window.__bridgeNetworkCaptured.push({ url, method, status, mocked: true, at: Date.now() });
+        return Promise.resolve(new Response(route.body != null ? route.body : '', { status, headers }));
+      }
+    }
+
+    window.__bridgeNetInflight++;
     const start = Date.now();
     return origFetch.apply(this, arguments).then(async (res) => {
+      window.__bridgeNetInflight = Math.max(0, window.__bridgeNetInflight - 1);
       const clone = res.clone();
       let respBody = null;
       try {
@@ -1189,12 +1244,13 @@ function networkIntercept() {
       });
       return res;
     }).catch(err => {
+      window.__bridgeNetInflight = Math.max(0, window.__bridgeNetInflight - 1);
       window.__bridgeNetworkCaptured.push({ url, method, error: err.message, at: Date.now() });
       throw err;
     });
   };
 
-  // Monkey-patch XMLHttpRequest
+  // Monkey-patch XMLHttpRequest（捕获 + 在途计数；不做路由）
   const OrigXHR = window.XMLHttpRequest;
   window.XMLHttpRequest = function () {
     const xhr = new OrigXHR();
@@ -1208,7 +1264,9 @@ function networkIntercept() {
     xhr.send = function (body) {
       _body = body;
       const start = Date.now();
+      window.__bridgeNetInflight++;
       xhr.addEventListener('loadend', () => {
+        window.__bridgeNetInflight = Math.max(0, window.__bridgeNetInflight - 1);
         let respBody = null;
         try {
           const ct = xhr.getResponseHeader('content-type') || '';
@@ -1230,6 +1288,34 @@ function networkIntercept() {
   window.XMLHttpRequest.prototype = OrigXHR.prototype;
 
   return { ok: true, installed: true };
+}
+
+// 增加一条 fetch 路由（match → abort | fulfill 自定义响应）。需先/同时安装拦截。
+function routeAdd(route) {
+  if (!window.__bridgeNetRoutes) window.__bridgeNetRoutes = [];
+  window.__bridgeNetRoutes.push(route || {});
+  return { ok: true, routes: window.__bridgeNetRoutes.length };
+}
+// 清空所有路由
+function routeClear() {
+  const n = (window.__bridgeNetRoutes || []).length;
+  window.__bridgeNetRoutes = [];
+  return { cleared: n };
+}
+// 等待网络空闲：连续 idleMs 内在途请求为 0
+async function waitNetworkIdle(idleMs, timeout) {
+  idleMs = idleMs || 500; timeout = timeout || 15000;
+  const deadline = Date.now() + timeout;
+  let idleSince = null;
+  while (Date.now() < deadline) {
+    const n = window.__bridgeNetInflight || 0;
+    if (n === 0) {
+      if (idleSince === null) idleSince = Date.now();
+      else if (Date.now() - idleSince >= idleMs) return { idle: true };
+    } else { idleSince = null; }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return { idle: false, inflight: window.__bridgeNetInflight || 0 };
 }
 
 // 返回已捕获的请求列表

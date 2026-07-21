@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 580" font-family="'Segoe UI',system-ui,-apple-system,sans-serif">
+  <defs>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4caf50"/>
+    </marker>
+    <marker id="arrIndigo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7c8cf8"/>
+    </marker>
+    <marker id="arrMuted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a93b8"/>
+    </marker>
+    <marker id="arrSmall" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#cdd3f0"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="980" height="580" rx="16" fill="#141a2e"/>
+
+  <!-- title -->
+  <text x="490" y="40" text-anchor="middle" fill="#e6e8f5" font-size="22" font-weight="700">Remote Browser Bridge · 架构 / Architecture</text>
+  <text x="490" y="64" text-anchor="middle" fill="#8a93b8" font-size="13">反向发起的控制隧道 —— a reverse-initiated control tunnel (NAT traversal via long-polling)</text>
+
+  <!-- ===== LEFT: local ===== -->
+  <rect x="34" y="92" width="372" height="404" rx="12" fill="#16213e" stroke="#2a3566"/>
+  <text x="54" y="120" fill="#7c8cf8" font-size="15" font-weight="700">🖥  本地 · Your desktop</text>
+
+  <!-- chrome extension -->
+  <rect x="54" y="136" width="332" height="158" rx="10" fill="#1b2647" stroke="#34407a"/>
+  <text x="70" y="160" fill="#cdd3f0" font-size="13" font-weight="700">Chrome + 扩展 (MV3)</text>
+  <rect x="70" y="172" width="300" height="48" rx="8" fill="#232f59"/>
+  <text x="84" y="192" fill="#e0e4f5" font-size="12" font-weight="600">background — 执行器 / executor</text>
+  <text x="84" y="208" fill="#9aa3c8" font-size="10.5">chrome.scripting · tabs · cookies · tabGroups</text>
+  <rect x="70" y="228" width="300" height="52" rx="8" fill="#232f59"/>
+  <text x="84" y="248" fill="#e0e4f5" font-size="12" font-weight="600">content — 中继 / relay</text>
+  <text x="84" y="264" fill="#9aa3c8" font-size="10.5">注入控制台页 · long-poll + 转发指令</text>
+
+  <!-- controlled tab group -->
+  <rect x="54" y="308" width="332" height="168" rx="10" fill="#1b2647" stroke="#5a4620"/>
+  <text x="70" y="332" fill="#ffb74d" font-size="13" font-weight="700">🔒 Remote Control 标签组</text>
+  <g>
+    <rect x="70" y="344" width="94" height="54" rx="8" fill="#232f59"/>
+    <circle cx="86" cy="362" r="5" fill="#7c8cf8"/><text x="98" y="366" fill="#cdd3f0" font-size="10.5">tab A</text>
+    <text x="80" y="386" fill="#8a93b8" font-size="9">site.com</text>
+    <rect x="174" y="344" width="94" height="54" rx="8" fill="#232f59"/>
+    <circle cx="190" cy="362" r="5" fill="#4caf50"/><text x="202" y="366" fill="#cdd3f0" font-size="10.5">tab B</text>
+    <text x="184" y="386" fill="#8a93b8" font-size="9">app.com</text>
+    <rect x="278" y="344" width="94" height="54" rx="8" fill="#232f59"/>
+    <circle cx="294" cy="362" r="5" fill="#ffa726"/><text x="306" y="366" fill="#cdd3f0" font-size="10.5">tab C</text>
+    <text x="288" y="386" fill="#8a93b8" font-size="9">…</text>
+  </g>
+  <text x="70" y="424" fill="#8a93b8" font-size="10.5">③ 在这组里执行 · execute here → 结果回传</text>
+  <text x="70" y="452" fill="#7c8cf8" font-size="10.5" font-style="italic">只碰这一组，其它标签页绝不触碰</text>
+  <text x="70" y="468" fill="#8a93b8" font-size="9.5" font-style="italic">only these tabs are ever touched</text>
+
+  <!-- ===== RIGHT: cloud ===== -->
+  <rect x="574" y="92" width="372" height="404" rx="12" fill="#17203c" stroke="#2a3566"/>
+  <text x="594" y="120" fill="#7c8cf8" font-size="15" font-weight="700">☁  云端 · CodeNext 容器</text>
+
+  <!-- bridge server -->
+  <rect x="594" y="136" width="332" height="120" rx="10" fill="#1b2647" stroke="#34407a"/>
+  <text x="610" y="160" fill="#cdd3f0" font-size="13" font-weight="700">bridge 服务 · server.js</text>
+  <text x="610" y="182" fill="#9aa3c8" font-size="11">会合点 · 指令队列 · REST · 控制台看板</text>
+  <text x="610" y="200" fill="#9aa3c8" font-size="11">rendezvous · queue · REST · console board</text>
+  <text x="610" y="228" fill="#7c8cf8" font-size="10.5" font-family="ui-monospace,monospace">/api/connect·poll·result·command·handoff</text>
+
+  <!-- callers -->
+  <rect x="594" y="300" width="332" height="112" rx="10" fill="#1b2647" stroke="#34407a"/>
+  <text x="610" y="324" fill="#cdd3f0" font-size="13" font-weight="700">runner / MCP / 控制台</text>
+  <text x="610" y="346" fill="#9aa3c8" font-size="11">Bridge 引擎 · MCP 工具 (给 AI Agent)</text>
+  <text x="610" y="364" fill="#9aa3c8" font-size="11">console · 你 (人工接管 waitForHuman)</text>
+  <text x="610" y="392" fill="#8a93b8" font-size="10.5" font-style="italic">算力 &amp; 脚本住在这里 · compute lives here</text>
+
+  <!-- internal enqueue arrow (callers -> bridge) -->
+  <path d="M760 300 L760 262" fill="none" stroke="#cdd3f0" stroke-width="1.6" marker-end="url(#arrSmall)"/>
+  <text x="768" y="284" fill="#9aa3c8" font-size="10">②a 入队 /api/command</text>
+
+  <!-- ===== middle: the tunnel ===== -->
+  <!-- reverse proxy pill -->
+  <rect x="432" y="250" width="120" height="30" rx="15" fill="#20284a" stroke="#3a4680"/>
+  <text x="492" y="269" text-anchor="middle" fill="#9aa3c8" font-size="10">CodeNext 反代 /_/port/</text>
+
+  <!-- (1) outbound long-poll: local -> cloud (dashed green) -->
+  <path d="M386 200 C 470 200, 500 176, 594 176" fill="none" stroke="#4caf50" stroke-width="2.4" stroke-dasharray="7 5" marker-end="url(#arrGreen)"/>
+  <text x="490" y="150" text-anchor="middle" fill="#7fd48a" font-size="11.5" font-weight="600">① 出站长轮询 · outbound long-poll (HTTPS)</text>
+  <text x="490" y="167" text-anchor="middle" fill="#6f8f77" font-size="10">本地主动拨出并挂住连接 · dialed out &amp; held open</text>
+
+  <!-- (2) command pushed back: cloud -> local (solid indigo) -->
+  <path d="M594 224 C 500 224, 470 316, 386 316" fill="none" stroke="#7c8cf8" stroke-width="2.4" marker-end="url(#arrIndigo)"/>
+  <text x="490" y="352" text-anchor="middle" fill="#9fb0ff" font-size="11.5" font-weight="600">② 指令顺着已开的 poll 推回 · commands pushed back</text>
+
+  <!-- (result) local -> cloud thin -->
+  <path d="M386 292 C 460 292, 470 244, 574 244" fill="none" stroke="#8a93b8" stroke-width="1.4" stroke-dasharray="3 4" marker-end="url(#arrMuted)"/>
+  <text x="470" y="304" text-anchor="middle" fill="#8a93b8" font-size="9.5">结果 /api/result</text>
+
+  <!-- ===== legend ===== -->
+  <g transform="translate(34,512)">
+    <text x="0" y="14" fill="#8a93b8" font-size="11" font-weight="700">图例 / Legend:</text>
+    <line x1="92" y1="10" x2="128" y2="10" stroke="#4caf50" stroke-width="2.4" stroke-dasharray="7 5" marker-end="url(#arrGreen)"/>
+    <text x="136" y="14" fill="#9aa3c8" font-size="11">连接由本地发起 (NAT 穿透) · connection initiated by local</text>
+    <line x1="560" y1="10" x2="596" y2="10" stroke="#7c8cf8" stroke-width="2.4" marker-end="url(#arrIndigo)"/>
+    <text x="604" y="14" fill="#9aa3c8" font-size="11">指令 / 数据流 · command &amp; data flow</text>
+  </g>
+  <g transform="translate(34,536)">
+    <text x="0" y="14" fill="#7c8cf8" font-size="10.5" font-weight="600">两层鉴权 / two-layer auth:</text>
+    <text x="150" y="14" fill="#8a93b8" font-size="10.5">外层 CodeNext 登录代理 (/_/port/) + 内层每个 /api/* 的 Bearer token</text>
+  </g>
+</svg>

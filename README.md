@@ -1,5 +1,7 @@
 # Remote Browser Bridge
 
+**简体中文** · [English](README.en.md)
+
 ![version](https://img.shields.io/badge/version-1.8.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 让 **CodeNext**（云端 IDE / 容器）或 **AI Agent** 通过一个 Chrome 扩展**远程操控你本地的浏览器**。
@@ -55,18 +57,7 @@
 
 它**不是把某台机器反代给你**，而是一条**反向发起、被收窄到"执行浏览器动作"这一个能力的控制隧道**。关键点：云端**够不到**你桌面（你在 NAT / 防火墙后、没有公网 IP），所以**由你本地的扩展主动往外拨**、挂住一个长轮询，指令再顺着这条已开的出站连接推回来——和反向 SSH 隧道 / `ngrok` / webhook 中继是同一个思想。
 
-```
-        本地（你的桌面）                          云端（CodeNext 容器）
- ┌────────────────────────┐              ┌────────────────────────────────┐
- │  Chrome + 扩展          │  ① 出站长轮询   │  bridge 服务（会合点/队列/REST） │
- │   background（执行器）   │─────────────▶│                                │
- │   content（中继，注入到  │    HTTPS      │  runner / MCP / 控制台          │
- │    控制台页面）          │◀─────────────│   ② POST /api/command（入队）   │
- └────────────┬───────────┘  ③ 指令顺着挂着  └────────────────┬───────────────┘
-              │              的 poll 推回本地                  │
-              ▼   （经 CodeNext 自带反代 /_/port/3006/ 中转）    │
-      在 Remote Control 标签组里执行 → 结果 POST /api/result 回传
-```
+![Remote Browser Bridge 架构 / Architecture](docs/architecture.svg)
 
 **① 传输：HTTP 长轮询（不用 WebSocket）** — 扩展 `POST /api/connect` 拿到 `browserId`，再 `GET /api/poll` 被服务器挂住最多 25 秒：有指令立即返回，否则空返回再轮。云端 `POST /api/command` 会在服务端阻塞，直到扩展 poll 到 → 执行 → `POST /api/result` 回填才返回——对调用方看起来就是一次同步 RPC。选长轮询而非 WS，是因为纯 GET / POST 能干净地穿过任意 HTTP 反代（CodeNext 的 `/_/port/`）和公司代理，无需 upgrade 协商。**在这儿"能穿透"是特性，不是缺陷。**
 

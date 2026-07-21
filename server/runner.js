@@ -155,6 +155,22 @@ class Bridge {
     return this.exec('snapshot', { maxLength });
   }
 
+  // ── 结构化 ref 快照 + 按 ref 操作（对 LLM/Agent 友好，比 CSS 选择器稳）──
+  // snapshotRefs() 返回 { text, elements:[{ref,role,name,...}] }，每个元素带 [eN] 编号；
+  // 之后用 clickRef('e3') / typeRef('e5','文本') 直接按编号操作，无需选择器。
+  async snapshotRefs(maxNodes = 200) {
+    return this.exec('snapshot_refs', { maxNodes });
+  }
+  async clickRef(ref) {
+    return this.exec('click_ref', { ref });
+  }
+  async typeRef(ref, text, clearFirst = true) {
+    return this.exec('type_ref', { ref, text, clearFirst });
+  }
+  async getRef(ref) {
+    return this.exec('get_ref', { ref });
+  }
+
   async screenshot() {
     return this.exec('screenshot');
   }

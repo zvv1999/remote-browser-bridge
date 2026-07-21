@@ -1,5 +1,19 @@
 # 变更记录
 
+## v1.6.0 — 结构化 ref 快照（对 LLM/Agent 友好）
+
+给页面做一份「无障碍树」式的结构化快照，每个可交互元素带稳定编号 `[e1] [e2]…`，然后**按编号操作**，不用再写脆弱的 CSS 选择器 —— 这是让 AI Agent 可靠驱动页面的地基。
+
+- **新增 `snapshot_refs`**（别名 `aria_snapshot`）：遍历页面，给每个可交互元素/标题编号并存到隔离世界的 `window.__bridgeRefs`，返回：
+  - `text`：可读清单，如 `[e3] textbox "用户名" placeholder="请输入手机号"`；
+  - `elements`：结构化数组 `{ref, role, name, href, value, checked, disabled, …}`。
+  - 语义名解析：`aria-label` / `label[for]` / 包裹 `<label>` / `placeholder` / 文本；角色按标签与 `type`/`role` 推断；隐藏子树跳过、禁用/勾选状态标注。
+- **新增 `click_ref` / `type_ref` / `get_ref`**：按 `snapshot_refs` 给出的编号点击/输入/查询；runner 对应 `bridge.snapshotRefs()` / `clickRef(ref)` / `typeRef(ref, text)` / `getRef(ref)`。ref 失效（页面变化/元素移除）会明确提示「请重新 snapshot_refs」。
+- **控制台**：命令下拉新增这几项，快捷栏加「🧭 元素快照」，结果以可读清单展示。
+- **🐛 顺手修掉一个潜伏 bug**：`click` / `click_text` 过去同时 `dispatchEvent(click)` **又** `el.click()`，导致**复选框/单选被切换两次**（等于没变）。现在统一只触发一次点击（`el.click()`，失败才回退 dispatch），复选框、跟随链接、表单提交等默认行为都正确。
+
+> 典型用法：`snapshotRefs()` 看清页面 → `typeRef('e3','关键词')` → `clickRef('e5')`。对 LLM 来说，喂它带编号的清单比喂原始 HTML 稳得多、也省 token。
+
 ## v1.5.0 — 后台友好模式
 
 让浏览器可以在**后台标签页**工作，不再每条命令都抢焦点、把标签强切到前台。

@@ -391,6 +391,23 @@ async function executeAction(action, params) {
     }
     case 'snapshot':
       return await executeInTab(tab.id, getPageSnapshot, [params.maxLength || 8000], frameId);
+
+    // ── 结构化「无障碍」快照 + 按 ref 操作（给 LLM/Agent 用，比 CSS 选择器稳）──
+    // snapshot_refs 给页面上每个可交互元素编号 [e1] [e2]…，并把映射存到页面隔离世界的
+    // window.__bridgeRefs，随后 click_ref / type_ref / get_ref 直接按 ref 操作，无需选择器。
+    case 'snapshot_refs':
+    case 'aria_snapshot':
+      return await executeInTab(tab.id, buildRefSnapshot, [params.maxNodes || 200], frameId);
+    case 'click_ref':
+      if (!params.ref) throw new Error('ref param required for click_ref');
+      return await executeInTab(tab.id, clickRef, [params.ref], frameId);
+    case 'type_ref':
+      if (!params.ref) throw new Error('ref param required for type_ref');
+      return await executeInTab(tab.id, typeRef, [params.ref, params.text || '', params.clearFirst !== false], frameId);
+    case 'get_ref':
+      if (!params.ref) throw new Error('ref param required for get_ref');
+      return await executeInTab(tab.id, getRefInfo, [params.ref], frameId);
+
     case 'get_text':
       return await executeInTab(tab.id, getElementText, [params.selector], frameId);
     case 'get_attribute':
@@ -518,8 +535,8 @@ function clickElement(selector, index) {
   const el = els[index] || els[0];
   if (!el) return { clicked: false, found: 0, error: `not found: ${selector}` };
   el.scrollIntoView({ behavior: 'instant', block: 'center' });
-  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-  try { el.click(); } catch(e) {}
+  // 只点一次：避免复选框/单选被切换两次（等于没变），见 clickRef 注释
+  try { el.click(); } catch(e) { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }
   return { clicked: true, tag: el.tagName, text: el.textContent?.substring(0, 100) };
 }
 function typeText(selector, text, clearFirst) {
@@ -627,6 +644,175 @@ function selectOption(selector, value) {
   el.value = value;
   el.dispatchEvent(new Event('change', { bubbles: true }));
   return { selected: true, value };
+}
+
+// ══════════════════════════════════════
+// 结构化「无障碍」快照 + 按 ref 操作
+// 供 LLM/Agent 使用：给每个可交互/结构性元素编号，按 ref 操作而非脆弱的 CSS 选择器
+// ══════════════════════════════════════
+
+function buildRefSnapshot(maxNodes) {
+  const LIMIT = maxNodes || 200;
+  const store = (window.__bridgeRefs = {}); // 存到隔离世界的 window，供后续 click_ref/type_ref 解析
+  let n = 0;
+  const out = [];
+
+  // display:none / visibility:hidden → 整个子树跳过（不递归）
+  const isHidden = (el) => {
+    const style = window.getComputedStyle(el);
+    return style.display === 'none' || style.visibility === 'hidden';
+  };
+  // 元素自身是否有可见盒子（用于决定是否收录，不用于是否递归）
+  const hasBox = (el) => {
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const roleOf = (el) => {
+    const explicit = el.getAttribute('role');
+    if (explicit) return explicit;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a' && el.hasAttribute('href')) return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'input') {
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      if (t === 'checkbox') return 'checkbox';
+      if (t === 'radio') return 'radio';
+      if (t === 'submit' || t === 'button' || t === 'reset') return 'button';
+      if (t === 'search') return 'searchbox';
+      return 'textbox';
+    }
+    if (/^h[1-6]$/.test(tag)) return 'heading';
+    if (el.isContentEditable) return 'textbox';
+    return tag;
+  };
+
+  const nameOf = (el) => {
+    const aria = el.getAttribute('aria-label');
+    if (aria) return aria.trim();
+    const labelledby = el.getAttribute('aria-labelledby');
+    if (labelledby) {
+      const l = document.getElementById(labelledby);
+      if (l) return (l.innerText || l.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    if (el.id) {
+      try {
+        const lab = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]');
+        if (lab) return (lab.innerText || lab.textContent || '').replace(/\s+/g, ' ').trim();
+      } catch (e) {}
+    }
+    const wrapLabel = el.closest && el.closest('label');
+    if (wrapLabel) { const t = (wrapLabel.innerText || '').replace(/\s+/g, ' ').trim(); if (t) return t; }
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea') {
+      return el.getAttribute('placeholder') || el.getAttribute('name') || '';
+    }
+    if (tag === 'img') return el.getAttribute('alt') || '';
+    const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text) return text;
+    return el.getAttribute('title') || el.getAttribute('name') || '';
+  };
+
+  const isInteractive = (el) => {
+    const tag = el.tagName.toLowerCase();
+    if (['a', 'button', 'input', 'textarea', 'select'].includes(tag)) return true;
+    if (el.isContentEditable) return true;
+    const role = el.getAttribute('role');
+    if (role && ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'menuitemcheckbox', 'switch', 'option'].includes(role)) return true;
+    if (el.hasAttribute('onclick')) return true;
+    if (el.getAttribute('tabindex') !== null && el.tabIndex >= 0) return true;
+    return false;
+  };
+  const isHeading = (el) => /^h[1-6]$/.test(el.tagName.toLowerCase());
+
+  const walk = (el) => {
+    if (n >= LIMIT) return;
+    if (isHidden(el)) return; // 隐藏子树整体跳过
+    if ((isInteractive(el) || isHeading(el)) && hasBox(el)) {
+      const ref = 'e' + (++n);
+      store[ref] = el;
+      const item = { ref, role: roleOf(el), name: nameOf(el).substring(0, 120) };
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'a' && el.getAttribute('href')) item.href = el.href;
+      if (tag === 'input' || tag === 'textarea') {
+        const type = el.getAttribute('type'); if (type) item.type = type;
+        if (el.placeholder) item.placeholder = el.placeholder;
+        if (el.value) item.value = String(el.value).substring(0, 80);
+        if ((el.type === 'checkbox' || el.type === 'radio')) item.checked = !!el.checked;
+      }
+      if (el.disabled) item.disabled = true;
+      out.push(item);
+    }
+    const kids = el.children;
+    for (let i = 0; i < kids.length && n < LIMIT; i++) walk(kids[i]);
+  };
+  walk(document.body || document.documentElement);
+
+  const text = out.map((it) => {
+    let line = '[' + it.ref + '] ' + it.role;
+    if (it.name) line += ' "' + it.name + '"';
+    if (it.href) line += ' (' + it.href + ')';
+    if (it.placeholder) line += ' placeholder="' + it.placeholder + '"';
+    if (it.value) line += ' value="' + it.value + '"';
+    if (it.checked) line += ' [checked]';
+    if (it.disabled) line += ' [disabled]';
+    return line;
+  }).join('\n');
+
+  return { url: location.href, title: document.title, count: out.length, truncated: n >= LIMIT, elements: out, text };
+}
+
+function clickRef(ref) {
+  const el = (window.__bridgeRefs || {})[ref];
+  if (!el) return { clicked: false, error: 'ref 未找到（页面可能已变化，请重新 snapshot_refs）: ' + ref };
+  if (!document.contains(el)) return { clicked: false, error: 'ref 对应元素已从页面移除，请重新 snapshot_refs: ' + ref };
+  el.scrollIntoView({ behavior: 'instant', block: 'center' });
+  // 只触发一次点击：el.click() 会派发可冒泡的 click 并执行默认行为（勾选复选框/跟随链接/提交等），
+  // React/Vue 也能在根部捕获。切忌再额外 dispatch 一个 click —— 否则复选框会被切换两次（等于没变）。
+  try { el.click(); } catch (e) { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }
+  return { clicked: true, ref, tag: el.tagName, text: (el.innerText || el.value || '').substring(0, 80) };
+}
+
+function typeRef(ref, text, clearFirst) {
+  const el = (window.__bridgeRefs || {})[ref];
+  if (!el) return { typed: false, error: 'ref 未找到（请重新 snapshot_refs）: ' + ref };
+  if (!document.contains(el)) return { typed: false, error: 'ref 对应元素已移除: ' + ref };
+  el.focus();
+  if (el.isContentEditable) {
+    if (clearFirst) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      document.execCommand('delete');
+    }
+    document.execCommand('insertText', false, text);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return { typed: true, ref, contentEditable: true };
+  }
+  const proto = (el instanceof HTMLTextAreaElement) ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+  const setValue = (v) => { (desc && desc.set) ? desc.set.call(el, v) : (el.value = v); };
+  setValue((clearFirst ? '' : (el.value || '')) + text);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { typed: true, ref, tag: el.tagName };
+}
+
+function getRefInfo(ref) {
+  const el = (window.__bridgeRefs || {})[ref];
+  if (!el) return { error: 'ref 未找到（请重新 snapshot_refs）: ' + ref };
+  const rect = el.getBoundingClientRect();
+  return {
+    ref, tag: el.tagName, role: el.getAttribute('role') || null,
+    text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 200),
+    value: (el.value !== undefined) ? el.value : null,
+    href: el.href || null,
+    visible: el.offsetParent !== null,
+    rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
+  };
 }
 
 // ══════════════════════════════════════
@@ -785,8 +971,8 @@ function clickByText(text, tagName) {
   const best = candidates[0];
   try {
     best.el.scrollIntoView({ behavior: 'instant', block: 'center' });
-    best.el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    best.el.click();
+    // 只点一次（见 clickRef 注释），避免复选框类被双切换
+    try { best.el.click(); } catch (e) { best.el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }
   } catch (e) {}
   return {
     clicked: true,

@@ -461,6 +461,7 @@ function getConsoleHTML(req) {
   <div class="quick-actions">
     <button class="qa-btn" onclick="quickAction('screenshot')">📸 截图</button>
     <button class="qa-btn" onclick="quickAction('snapshot')">📋 快照</button>
+    <button class="qa-btn" onclick="quickAction('snapshot_refs')">🧭 元素快照</button>
     <button class="qa-btn" onclick="quickAction('get_page_info')">ℹ️ 页面信息</button>
     <button class="qa-btn" onclick="quickAction('get_cookies')">🍪 Cookies</button>
     <button class="qa-btn" onclick="quickAction('get_links')">🔗 链接</button>
@@ -478,6 +479,10 @@ function getConsoleHTML(req) {
       <option value="type">输入文字</option>
       <option value="click_text">按文字点击</option>
       <option value="snapshot">页面快照</option>
+      <option value="snapshot_refs">结构化快照(ref)</option>
+      <option value="click_ref">点击 ref (如 e3)</option>
+      <option value="type_ref">输入到 ref (e3||文本)</option>
+      <option value="get_ref">查看 ref</option>
       <option value="screenshot">截图</option>
       <option value="get_html">获取 HTML</option>
       <option value="get_text">获取文字</option>
@@ -787,6 +792,14 @@ function getConsoleHTML(req) {
         break;
       case 'click_text': params.text = param; break;
       case 'snapshot': params.maxLength = parseInt(param) || 8000; break;
+      case 'snapshot_refs': params.maxNodes = parseInt(param) || 200; break;
+      case 'click_ref': params.ref = param; break;
+      case 'type_ref':
+        var refParts = param.split('||');
+        params.ref = (refParts[0] || '').trim();
+        params.text = (refParts[1] || '').trim();
+        break;
+      case 'get_ref': params.ref = param; break;
       case 'screenshot': params.format = 'png'; break;
       case 'get_html': params.selector = param || 'body'; break;
       case 'get_text': params.selector = param; break;
@@ -892,6 +905,13 @@ function getConsoleHTML(req) {
   // ─── 结果分发到对应面板 ───
   function handleActionResult(action, data) {
     if (!data) return;
+    // 结构化 ref 快照 → 输出面板（可读文本，带 [eN] 编号）
+    if ((action === 'snapshot_refs' || action === 'aria_snapshot') && data.text) {
+      var outEl = document.getElementById('panel-output');
+      outEl.innerHTML += '<div class="cmd">🧭 结构化快照 (' + (data.count || 0) + ' 个元素' + (data.truncated ? ', 已截断' : '') + ')</div>'
+        + '<div class="result" style="max-height:none;color:#c0c0c0">' + escapeHtml(data.text) + '</div>';
+      switchPanel('output');
+    }
     // 截图 → 截图面板
     if (action === 'screenshot' && data.dataUrl) {
       storedScreenshot = {

@@ -1,11 +1,26 @@
 # Remote Browser Bridge
 
+![version](https://img.shields.io/badge/version-1.5.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+
 让 **CodeNext**（云端 IDE / 容器）通过一个 Chrome 扩展**远程操控你本地的浏览器**。
 纯 HTTP 长轮询，无需 WebSocket；扩展**只操控名为 `Remote Control` 的标签组**，其它标签页完全不受影响。
 
 > Drive your local Chrome from a cloud IDE (CodeNext) through a small MV3 extension + a
 > zero-dependency Node bridge. HTTP long-polling only. The extension touches **only** tabs
 > inside a tab group named `Remote Control`.
+
+---
+
+## 功能亮点
+
+- 🖥️ **后台操控** — 命令作用于「当前目标标签」而**不抢焦点**，你可以一边用别的标签/窗口，一边让它在后台自动化（仅截图因 Chrome 限制会临时切一下再切回）。
+- 🔒 **安全隔离** — 只操控 `Remote Control` 标签组内的页面，其它标签页绝不触碰。
+- 🔑 **强制 token 鉴权** — 所有 `/api/*` 都要求自动生成的 token；token 自动内嵌进控制台页、扩展与前端自动携带，`runner.js` 从 `.bridge-token` 自动读取，你几乎无感。
+- 🧰 **40+ 指令** — 导航、点击/输入/按键、读取 DOM/文本/HTML、等待元素/文字、滚动、关闭弹窗、cookie、`iframe` 内操作、执行 JS。
+- 🌐 **网络抓包 + 页面级请求** — 在页面**主世界**拦截 `fetch`/`XHR`，或用页面自身凭证发请求（`networkFetch`）。
+- 🎨 **Canvas 文本读取** — 拦截 canvas 绘制文本并按坐标重排成可读文本（适用于用 canvas 渲染正文的页面）。
+- 📊 **控制台看板** — 标签页 / 截图 / 网络 / Cookie 四个面板，快捷按钮 + 命令工具栏。
+- ⚙️ **零依赖，两种写法** — 纯 Node（`http`/`crypto`），支持灵活的 JS 脚本与简单的 JSON 声明式步骤。
 
 ---
 
@@ -106,6 +121,39 @@ node server/runner.js examples/quickstart.js --port=3006 --token=xxx
 - 扩展每 30 秒推送一次受控标签页信息到控制台（也会在页面变化时即时推送）。
 - Bridge 服务 90 秒无心跳会自动断开该会话；服务重启后刷新控制台页面即可重连。
 - 本版本相对原始 v1.3.0 的全部修复见 **[CHANGES.md](CHANGES.md)**。
+
+---
+
+## 常见问题
+
+**扩展显示「未连接」/ 连不上？**
+- 确认控制台 URL 粘贴正确（`.../3006/`，注意结尾斜杠），且服务已启动。
+- 确认已建好名为 `Remote Control` 的标签组（一字不差），或在控制台执行 `create_group`。
+- 改动过扩展后要在 `chrome://extensions` **重新加载扩展**，并**刷新控制台页面**。
+
+**runner / 命令报 `401 unauthorized`？**
+- token 不一致。`runner.js` 默认读运行目录下的 `.bridge-token`，请在 **server 的工作目录**里运行它；
+  或显式指定：设 `BRIDGE_TOKEN` 环境变量、或传 `--token=xxx`。控制台页会自动内嵌 token，一般无需手动处理。
+
+**端口不是 3006？**
+- 用 `BRIDGE_PORT` 改端口，控制台 URL 里的端口、`runner --port` 要和它一致。
+
+**截图时画面闪了一下？**
+- 正常。`captureVisibleTab` 只能截前台标签，所以会临时切到目标标签、截完再切回你原来的标签（返回值带 `refocused`）。
+
+**提示「该页面不允许脚本注入」？**
+- `chrome://`、Chrome 网上应用店等受限页面无法注入脚本，换普通网页即可。
+
+**Canvas 文本 / 网络抓包读到的是空的？**
+- 需 v1.4.0+（钩子改在页面**主世界**注入才生效）；且 Canvas 钩子要在页面开始绘制**之前**用 `install_resume_hook` 安装。
+
+**Service Worker 一会儿就断、页面信息不推了？**
+- MV3 会回收 SW；本项目已用 `storage.session` + `chrome.alarms` 恢复。保持控制台标签页开着即可。
+
+**有多个受控标签，命令作用在哪个？**
+- 作用于「当前目标标签」（侧栏带 🎯）。用 `set_target`（或控制台点侧栏标签）设为后台目标；`switch_tab`（或 ▶ 按钮）才会切到前台。
+
+---
 
 ## 免责声明
 

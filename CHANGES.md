@@ -1,5 +1,18 @@
 # 变更记录
 
+## v1.8.0 — 人工接管 + 钉钉通知
+
+让脚本/Agent 遇到必须真人做的环节（登录、验证码、二次确认）时**暂停等你处理**，处理完点「继续」再往下跑；并可在需要注意时推送钉钉。
+
+- **人工接管**：`bridge.waitForHuman(message, opts?)` 在 bridge 服务登记一个接管请求并阻塞轮询；控制台顶部弹出**接管横幅**（[继续] / [中止]），用户点击后脚本恢复（中止则抛错）。默认超时 5 分钟。
+  - `bridge.pauseIfRisky(opts?)`：先 `check_risk`，命中风控/验证码才暂停。
+  - MCP 新增工具 `browser_wait_for_human`（阻塞到用户继续）。
+- **钉钉通知**：新增零依赖 `server/notify.js`（Node 内置 `https`+`crypto`）。`bridge.notify(text)` 推送到钉钉群机器人；`waitForHuman` 默认自动推一条。支持「加签」(`DINGTALK_SECRET`，HMAC-SHA256) 与「关键词」(`DINGTALK_KEYWORD`) 安全设置；未配置 `DINGTALK_WEBHOOK` 时静默跳过。MCP 新增工具 `browser_notify`。
+- **服务端**：新增 `/api/handoff/create·pending·status·resolve` 端点（均需 token），过期/已处理请求自动清理。
+- 示例 [examples/handoff.js](examples/handoff.js)；`package.json` 升到 1.8.0（Chrome 扩展未改动，仍 1.6.0）。
+
+> 典型用法：`await bridge.waitForHuman('请手动登录后点继续')` —— 你的手机收到钉钉、控制台弹横幅，登录完点一下，脚本继续。
+
 ## v1.7.0 — 内置 MCP Server（让 AI Agent 用你的浏览器）
 
 新增 `mcp/server.js`：把浏览器操控能力暴露成 [MCP](https://modelcontextprotocol.io) 工具，Claude Code / Claude Desktop / Cursor 等任何支持 MCP 的 Agent 都能直接调用，用你本人的登录态操作网页。

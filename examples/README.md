@@ -47,6 +47,7 @@ exports.main = async (bridge) => {
 | 标签 | `listTabs()` · `setTarget(id)`(后台目标) · `switchTab(id)`(切前台) · `closeTab(id)` · `createGroup()` · `listControlledTabs()` |
 | iframe | `listFrames()`（配合各方法的 `frameId` 参数在指定 iframe 内操作） |
 | 执行 | `evaluate(code)` |
+| 人机协作 | `waitForHuman(msg,opts?)` · `pauseIfRisky(opts?)` · `notify(text)`（钉钉） |
 | Canvas | `installResumeHook()` · `readResumeCanvas()` · `readResumeCanvasFull()` |
 
 也可以直接用底层调用：`bridge.exec('action_name', { ...params }, timeoutMs)`。

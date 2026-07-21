@@ -36,6 +36,11 @@ function extractToken(req, url, body) {
 // ─── 连接管理 ───
 const connections = new Map(); // browserId -> BrowserSession
 
+// ─── 人工接管请求 ───
+// 脚本/Agent 调 waitForHuman 时在此登记，控制台轮询显示横幅，用户点「继续/中止」后解除
+const handoffs = new Map(); // id -> { id, message, createdAt, timeoutMs, status, action }
+let handoffSeq = 0;
+
 // 优先返回最近活跃的会话
 function getDefaultBrowserId() {
   let latest = null;
@@ -272,6 +277,62 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: true }));
   }
 
+  // ── 人工接管：创建一个待处理请求（runner/Agent 调用）──
+  if (url.pathname === '/api/handoff/create' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!tokenValid(extractToken(req, url, body))) {
+      res.writeHead(401, { ...cors, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'unauthorized (bad or missing token)' }));
+    }
+    res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+    const id = ++handoffSeq;
+    handoffs.set(id, {
+      id, message: String(body.message || '需要人工介入'),
+      createdAt: Date.now(), timeoutMs: Math.max(5000, parseInt(body.timeoutMs || 300000, 10)),
+      status: 'pending', action: null,
+    });
+    console.log(`[Bridge] HANDOFF #${id} 等待人工: ${String(body.message || '').slice(0, 80)}`);
+    return res.end(JSON.stringify({ ok: true, id }));
+  }
+
+  // ── 人工接管：列出待处理请求（控制台轮询显示横幅）──
+  if (url.pathname === '/api/handoff/pending' && req.method === 'GET') {
+    res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+    const list = [];
+    for (const [, h] of handoffs) {
+      if (h.status === 'pending') list.push({ id: h.id, message: h.message, createdAt: h.createdAt });
+    }
+    list.sort((a, b) => a.createdAt - b.createdAt);
+    return res.end(JSON.stringify({ ok: true, handoffs: list }));
+  }
+
+  // ── 人工接管：查询某个请求状态（runner 轮询）──
+  if (url.pathname === '/api/handoff/status' && req.method === 'GET') {
+    res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+    const id = parseInt(url.searchParams.get('id'), 10);
+    const h = handoffs.get(id);
+    if (!h) return res.end(JSON.stringify({ ok: true, status: 'unknown' }));
+    return res.end(JSON.stringify({ ok: true, status: h.status, action: h.action }));
+  }
+
+  // ── 人工接管：用户在控制台点「继续/中止」──
+  if (url.pathname === '/api/handoff/resolve' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!tokenValid(extractToken(req, url, body))) {
+      res.writeHead(401, { ...cors, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'unauthorized (bad or missing token)' }));
+    }
+    res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+    const id = parseInt(body.id, 10);
+    const h = handoffs.get(id);
+    if (!h) return res.end(JSON.stringify({ ok: false, error: 'handoff not found' }));
+    h.status = 'resolved';
+    h.action = body.action === 'cancel' ? 'cancel' : 'continue';
+    h.resolvedAt = Date.now();
+    console.log(`[Bridge] HANDOFF #${id} 已由人工${h.action === 'cancel' ? '中止' : '确认继续'}`);
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
   // ── CodeNext 发指令给扩展（需 token）──
   if (url.pathname === '/api/command' && req.method === 'POST') {
     const body = await readBody(req);
@@ -314,7 +375,17 @@ setInterval(() => {
       connections.delete(id);
     }
   }
-}, 30000);
+  // 接管请求：超时未处理的标记 expired；已处理/过期的在 runner 取走结果后清理
+  for (const [id, h] of handoffs) {
+    if (h.status === 'pending' && now - h.createdAt > h.timeoutMs) {
+      h.status = 'expired'; h.resolvedAt = now;
+      console.log(`[Bridge] HANDOFF #${id} 超时未处理`);
+    }
+    if (h.status !== 'pending' && h.resolvedAt && now - h.resolvedAt > 30000) {
+      handoffs.delete(id);
+    }
+  }
+}, 10000);
 
 // ─── 控制台页面 ───
 function getConsoleHTML(req) {
@@ -435,6 +506,13 @@ function getConsoleHTML(req) {
 </style>
 </head>
 <body>
+<div id="handoffBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#3a2f0b;border-bottom:2px solid #ffa726;color:#ffe0a3;padding:10px 16px;align-items:center;gap:12px;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,.4)">
+  <span style="font-size:18px">⏸</span>
+  <span style="font-weight:600;white-space:nowrap">需要人工接管:</span>
+  <span id="handoffMsg" style="flex:1;min-width:0"></span>
+  <button id="handoffContinue" style="padding:6px 16px;border:none;border-radius:5px;background:#4caf50;color:#fff;cursor:pointer;font-weight:600;white-space:nowrap">✅ 继续</button>
+  <button id="handoffCancel" style="padding:6px 12px;border:1px solid #e57373;border-radius:5px;background:transparent;color:#e57373;cursor:pointer;white-space:nowrap">✖ 中止</button>
+</div>
 <div class="sidebar">
   <div class="sidebar-header">
     <h2>📱 浏览器标签页</h2>
@@ -1022,6 +1100,41 @@ function getConsoleHTML(req) {
       + '<tr><th>名称</th><th>值</th><th>域名</th><th>路径</th><th>标记</th></tr>'
       + rows + '</table>';
   }
+
+  // ─── 人工接管横幅 ───
+  var currentHandoffId = null;
+  async function refreshHandoffs() {
+    try {
+      var res = await fetch(BASE + '/api/handoff/pending', { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+      var data = await res.json();
+      var banner = document.getElementById('handoffBanner');
+      if (data.handoffs && data.handoffs.length > 0) {
+        var h = data.handoffs[0];
+        currentHandoffId = h.id;
+        document.getElementById('handoffMsg').textContent = h.message || '需要人工介入';
+        banner.style.display = 'flex';
+      } else {
+        currentHandoffId = null;
+        banner.style.display = 'none';
+      }
+    } catch (e) {}
+  }
+  function resolveHandoff(action) {
+    if (currentHandoffId == null) return;
+    var id = currentHandoffId;
+    fetch(BASE + '/api/handoff/resolve', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ id: id, action: action })
+    }).then(function () {
+      document.getElementById('handoffBanner').style.display = 'none';
+      currentHandoffId = null;
+      refreshHandoffs();
+    }).catch(function () {});
+  }
+  document.getElementById('handoffContinue').addEventListener('click', function () { resolveHandoff('continue'); });
+  document.getElementById('handoffCancel').addEventListener('click', function () { resolveHandoff('cancel'); });
+  setInterval(refreshHandoffs, 2000);
+  refreshHandoffs();
 
   // ─── 轮询 ───
   setInterval(refreshTabs, 3000);

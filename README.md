@@ -15,6 +15,7 @@
 
 - 🤖 **给 AI Agent 用（MCP）** — 内置零依赖 MCP server，Claude Code / Cursor 等可直接调用 `browser_snapshot`/`browser_click`/`browser_type` 等工具，用你本人的登录态操作网页。见 [mcp/README.md](mcp/README.md)。
 - 🧭 **结构化 ref 快照** — `snapshot_refs` 给每个可交互元素编号 `[eN]`，按编号点击/输入，比 CSS 选择器稳，对 LLM 友好。
+- 🙋 **人工接管 + 钉钉通知** — 脚本/Agent 遇到登录/验证码可 `waitForHuman()` 暂停，控制台弹出接管横幅并推送钉钉，你处理完点「继续」再往下跑；`pauseIfRisky()` 检测到风控自动暂停。
 - 🖥️ **后台操控** — 命令作用于「当前目标标签」而**不抢焦点**，你可以一边用别的标签/窗口，一边让它在后台自动化（仅截图因 Chrome 限制会临时切一下再切回）。
 - 🔒 **安全隔离** — 只操控 `Remote Control` 标签组内的页面，其它标签页绝不触碰。
 - 🔑 **强制 token 鉴权** — 所有 `/api/*` 都要求自动生成的 token；token 自动内嵌进控制台页、扩展与前端自动携带，`runner.js` 从 `.bridge-token` 自动读取，你几乎无感。
@@ -134,7 +135,33 @@ node server/runner.js examples/quickstart.js --port=3006 --token=xxx
 }
 ```
 
-提供 `browser_snapshot` / `browser_navigate` / `browser_click` / `browser_type` / `browser_screenshot` 等 13 个工具。详见 **[mcp/README.md](mcp/README.md)**。
+提供 `browser_snapshot` / `browser_navigate` / `browser_click` / `browser_type` / `browser_screenshot` / `browser_wait_for_human` 等工具。详见 **[mcp/README.md](mcp/README.md)**。
+
+---
+
+## 人工接管 + 钉钉通知
+
+脚本或 Agent 遇到必须真人操作的环节（登录、验证码、二次确认），可以暂停等你处理：
+
+```js
+// 无条件请人工，阻塞到你在控制台点「继续」
+await bridge.waitForHuman('请在浏览器里登录后点「继续」');
+
+// 或：检测到风控/验证码才暂停
+await bridge.pauseIfRisky();
+```
+
+调用后**控制台顶部弹出接管横幅**（[继续] / [中止]），同时（若配置了钉钉）推送通知。MCP 里对应 `browser_wait_for_human`。
+
+配置钉钉（可选，机器人 webhook）——在启动 runner / MCP 前设置环境变量：
+
+```bash
+export DINGTALK_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=xxx"  # 或只填 access_token
+export DINGTALK_SECRET="加签密钥"   # 若机器人用「加签」安全设置
+# 也支持「关键词」安全设置：export DINGTALK_KEYWORD="通知"
+```
+
+未配置时通知静默跳过，人工接管横幅照常工作。示例见 [examples/handoff.js](examples/handoff.js)。
 
 ---
 

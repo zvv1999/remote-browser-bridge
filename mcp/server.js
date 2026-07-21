@@ -208,6 +208,34 @@ const TOOLS = [
     },
   },
   {
+    name: 'browser_wait_for_human',
+    description: '暂停并请人工介入（手动登录 / 过验证码 / 确认敏感操作）。会在控制台弹出接管横幅，' +
+      '并（若配置了钉钉）推送通知，然后阻塞直到用户点「继续」。用于你无法自动完成、必须真人操作的环节。' +
+      '若用户点「中止」，本工具会返回错误。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: '给用户的提示，如"请手动登录后点继续"' },
+        timeout: { type: 'number', description: '毫秒，默认 300000（5 分钟）' },
+      },
+      required: ['message'],
+    },
+    run: async (a) => {
+      // 无需浏览器，直接走 bridge 服务的接管机制
+      const r = await bridge.waitForHuman(a.message, { timeout: a.timeout || 300000 });
+      return text('人工已确认继续 (' + (r.action || 'continue') + ')');
+    },
+  },
+  {
+    name: 'browser_notify',
+    description: '给用户的钉钉推一条消息（需配置环境变量 DINGTALK_WEBHOOK）。用于告知进度或提醒注意。',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    run: async (a) => {
+      const r = await bridge.notify(a.text);
+      return text(r.sent ? '已推送钉钉' : ('未推送: ' + (r.reason || '未配置')));
+    },
+  },
+  {
     name: 'browser_evaluate',
     description: '【高级】在页面执行一段 JS 表达式并返回结果。运行于隔离世界(不受页面 CSP 限制，但读不到页面自身 JS 变量)。',
     inputSchema: { type: 'object', properties: { code: { type: 'string', description: '要执行的 JS 表达式' } }, required: ['code'] },

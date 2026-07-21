@@ -257,6 +257,52 @@ class Bridge {
     return this.exec('check_risk');
   }
 
+  // ── 人机协作：钉钉通知 + 人工接管 ──
+
+  // 给你的钉钉推一条消息（需配置 DINGTALK_WEBHOOK，未配置则静默返回）
+  async notify(text) {
+    const { notify } = require('./notify');
+    return notify(text);
+  }
+
+  // 暂停并等待你在控制台点「继续」；默认同时推一条钉钉通知。
+  // opts: { timeout=300000, pollInterval=1500, notify=true }
+  async waitForHuman(message, opts = {}) {
+    const timeout = opts.timeout || 300000; // 默认最多等 5 分钟
+    const pollInterval = opts.pollInterval || 1500;
+    const created = await this._httpPost('/api/handoff/create', { message, timeoutMs: timeout });
+    const id = created && created.id;
+    if (opts.notify !== false) {
+      try { await this.notify('⏸ 需要人工接管：' + message); } catch (e) {}
+    }
+    if (this.verbose) process.stderr.write(`  ⏸ 等待人工接管: ${message}\n`);
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      await this._sleep(pollInterval);
+      let st;
+      try { st = await this._httpGet('/api/handoff/status?id=' + id); } catch (e) { continue; }
+      if (st && st.status === 'resolved') {
+        if (st.action === 'cancel') throw new Error('用户中止了操作 (human canceled)');
+        if (this.verbose) process.stderr.write('  ▶ 人工已确认继续\n');
+        return { resolved: true, action: st.action || 'continue' };
+      }
+      if (st && (st.status === 'expired' || st.status === 'unknown')) break;
+    }
+    throw new Error(`等待人工接管超时 (${timeout}ms)`);
+  }
+
+  // 检测风控/验证，命中则暂停等待人工处理（内部用 check_risk + waitForHuman）
+  async pauseIfRisky(opts = {}) {
+    const risk = await this.checkRisk();
+    if (risk && risk.risky) {
+      const msg = opts.message ||
+        ('检测到风控/验证' + ((risk.markers && risk.markers.length) ? '：' + risk.markers.join('、') : '') + '，请手动处理后点「继续」');
+      await this.waitForHuman(msg, opts);
+      return { paused: true, risk };
+    }
+    return { paused: false, risk };
+  }
+
   async dismissOverlays(maxAttempts = 12) {
     return this.exec('dismiss_overlays', { maxAttempts });
   }

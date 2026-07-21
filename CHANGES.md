@@ -1,5 +1,14 @@
 # 变更记录
 
+## v1.12.0 — 同源 iframe 穿透 + 录制生成脚本（codegen）
+
+清掉"扩展内还能补"的最后两个边角：
+
+- **同源 iframe 穿透**：定位器（`locator`/`getBy*`）与 `snapshot_refs` 现在会自动钻进**同源** iframe（`deepEls`/遍历递归进 `contentDocument`，跨源 `contentDocument` 抛错→自动跳过）；样式/标签解析改用元素自己文档的 view（`ownerDocument.defaultView`）。跨源 iframe 仍用 `list_frames` + `frameId` 显式定位。
+- **录制生成脚本（codegen）**：`bridge.startRecording()` 后你在浏览器里手动点/填，`bridge.stopRecording()` / `bridge.saveScript('flow.js')` 把操作生成一段可运行脚本。录制器在隔离世界监听真实的 click/change 事件，为每个元素挑一个尽量稳的定位器（优先级：`data-testid` → `id` → `role`+可访问名 → 可见文本 → 短 CSS 路径）；`generateScript(steps)` 把步骤转成 `getByRole/getByTestId/getByText/locator` + `click/fill/check/selectOption`。
+- 底层：扩展新增 `install_recorder/get_recording/stop_recorder` 动作；runner 新增 `startRecording/getRecording/stopRecording/generateScript/saveScript`。
+- 已**无头验证**：录制器对 button/link/testid/id/input/checkbox 的定位器选择正确、生成的脚本是合法可运行 JS（含引号转义）。iframe 穿透因本次浏览器沙盒禁用本地页面未能在真实 DOM 端到端跑，改动为机械式且有 try/catch 兜底。
+
 ## v1.11.0 — 对话框自动处理 + 轻量 trace
 
 - **JS 对话框自动处理**：`bridge.handleDialogs({accept?,promptText?})` 提前在页面主世界 monkeypatch `alert/confirm/prompt`，之后页面弹窗自动响应（默认接受），**不再卡死自动化**；`bridge.getDialogs()` 查看出现过哪些对话框。（原生 `beforeunload` 仅尽力压制属性式 handler。）

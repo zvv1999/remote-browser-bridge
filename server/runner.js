@@ -350,6 +350,54 @@ class Bridge {
     return { path: filePath, steps: trace.length };
   }
 
+  // ── Codegen：录制你的手动操作 → 生成脚本 ──
+  async startRecording() { return this.exec('install_recorder'); }
+  async getRecording() { return this.exec('get_recording'); }
+  async stopRecording() { return this.exec('stop_recorder'); }
+  // 把录制的步骤转成一段 runner 脚本源码
+  generateScript(steps) {
+    const q = (s) => JSON.stringify(String(s == null ? '' : s));
+    const loc = (l) => {
+      if (!l) return 'bridge.locator({})';
+      if (l.testid) return `bridge.getByTestId(${q(l.testid)})`;
+      if (l.role && l.name) return `bridge.getByRole(${q(l.role)}, ${q(l.name)})`;
+      if (l.role) return `bridge.getByRole(${q(l.role)})`;
+      if (l.text) return `bridge.getByText(${q(l.text)})`;
+      if (l.css) return `bridge.locator({ css: ${q(l.css)} })`;
+      return 'bridge.locator({})';
+    };
+    const lines = (steps || []).map((s) => {
+      const L = loc(s.locator);
+      if (s.type === 'click') return `  await ${L}.click();`;
+      if (s.type === 'fill') return `  await ${L}.fill(${q(s.value)});`;
+      if (s.type === 'check') return `  await ${L}.check();`;
+      if (s.type === 'uncheck') return `  await ${L}.uncheck();`;
+      if (s.type === 'select') return `  await ${L}.selectOption(${q(s.value)});`;
+      return `  // (未知步骤: ${s.type})`;
+    });
+    return [
+      '// 由 Remote Browser Bridge codegen 自动生成 —— 按需清理 / 参数化',
+      'exports.main = async (bridge) => {',
+      '  await bridge.connect();',
+      ...lines,
+      '  return { ok: true };',
+      '};',
+      '',
+      'if (require.main === module) {',
+      "  const { Bridge } = require('../server/runner');",
+      '  const bridge = new Bridge({ port: process.env.BRIDGE_PORT || 3006 });',
+      "  exports.main(bridge).then(() => console.log('✅ done')).catch(e => { console.error('❌', e.message); process.exit(1); });",
+      '}',
+      '',
+    ].join('\n');
+  }
+  async saveScript(filePath, steps) {
+    if (!steps) { const r = await this.getRecording(); steps = r.steps; }
+    const code = this.generateScript(steps);
+    fs.writeFileSync(filePath, code, 'utf8');
+    return { path: filePath, steps: (steps || []).length };
+  }
+
   async screenshot() {
     return this.exec('screenshot');
   }

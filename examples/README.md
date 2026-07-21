@@ -52,10 +52,15 @@ exports.main = async (bridge) => {
 | 人机协作 | `waitForHuman(msg,opts?)` · `pauseIfRisky(opts?)` · `notify(text)`（钉钉） |
 | 对话框 | `handleDialogs({accept?,promptText?})` · `getDialogs()` |
 | 调试追踪 | `startTrace({screenshots?})` · `stopTrace()` · `saveTrace(path)`（存 HTML 时间线） |
+| 录制生成脚本 | `startRecording()` · `getRecording()` · `stopRecording()` · `generateScript(steps)` · `saveScript(path)` |
 | Canvas | `installResumeHook()` · `readResumeCanvas()` · `readResumeCanvasFull()` |
 
 也可以直接用底层调用：`bridge.exec('action_name', { ...params }, timeoutMs)`。
 
+> **录制生成脚本（codegen）**：`await bridge.startRecording()` 后**你在浏览器里手动点/填**，`await bridge.saveScript('flow.js')` 就把你的操作生成一段可运行脚本（自动挑 testid / id / role+name / text / css 定位）。`getRecording()` 拿原始步骤。
+>
+> **iframe 定位**：定位器与 `snapshot_refs` 会自动穿透**同源** iframe（跨源自动跳过）；跨源 iframe 用 `list_frames` + 各方法的 `frameId` 参数显式定位。
+>
 > **对话框 + 调试追踪**：`await bridge.handleDialogs()` 提前装好，之后页面的 `alert/confirm/prompt` 自动响应、不再卡住（`getDialogs()` 看出现过哪些）。`bridge.startTrace({screenshots:true})` → 跑流程 → `await bridge.saveTrace('trace.html')` 生成一份**步骤时间线**（每步动作/耗时/成败，可含截图），排查 flaky 很好用。
 >
 > **网络控制 + 断言（补 Playwright）**：`await bridge.waitForNetworkIdle()` 等 SPA 请求都结束；`await bridge.route('/api/list', { body: {items:[]} })` 直接 mock 掉某个接口的响应（或 `bridge.route('/track', 'abort')` 拦掉某请求）；`await bridge.expect(bridge.getByText('成功')).toBeVisible()` 自动重试断言。路由作用于页面的 `fetch`。

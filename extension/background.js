@@ -372,6 +372,13 @@ async function executeAction(action, params) {
       return await executeInTab(tab.id, installDialogHandler, [params.opts || {}], frameId, 'MAIN');
     case 'get_dialogs':
       return await executeInTab(tab.id, getDialogs, [], frameId, 'MAIN');
+    // 录制器（codegen）——隔离世界即可监听真实事件
+    case 'install_recorder':
+      return await executeInTab(tab.id, installRecorder, [], frameId);
+    case 'get_recording':
+      return await executeInTab(tab.id, getRecording, [], frameId);
+    case 'stop_recorder':
+      return await executeInTab(tab.id, stopRecorder, [], frameId);
 
     // ── DOM 操作（支持可选 frameId）──
     case 'click':
@@ -679,9 +686,9 @@ function buildRefSnapshot(maxNodes) {
   let n = 0;
   const out = [];
 
-  // display:none / visibility:hidden → 整个子树跳过（不递归）
+  // display:none / visibility:hidden → 整个子树跳过（不递归）；跨 frame 用元素自己文档的 view
   const isHidden = (el) => {
-    const style = window.getComputedStyle(el);
+    const style = ((el.ownerDocument && el.ownerDocument.defaultView) || window).getComputedStyle(el);
     return style.display === 'none' || style.visibility === 'hidden';
   };
   // 元素自身是否有可见盒子（用于决定是否收录，不用于是否递归）
@@ -774,6 +781,11 @@ function buildRefSnapshot(maxNodes) {
       const sk = el.shadowRoot.children;
       for (let i = 0; i < sk.length && n < LIMIT; i++) walk(sk[i]);
     }
+    // 穿透同源 iframe（跨源 contentDocument 抛错→跳过）
+    if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+      let fd = null; try { fd = el.contentDocument; } catch (e) {}
+      if (fd && fd.body) walk(fd.body);
+    }
   };
   walk(document.body || document.documentElement);
 
@@ -855,17 +867,31 @@ async function locatorAct(spec, op, args, opts) {
   const timeout = opts.timeout || 15000;
   const deadline = Date.now() + timeout;
 
+  const frameDoc = (el) => { if (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') return null; try { return el.contentDocument; } catch (e) { return null; } };
+  // 遍历元素，穿透开放 Shadow DOM 和同源 iframe（跨源 contentDocument 抛错→跳过）
   const deepEls = (root, acc) => {
     acc = acc || [];
-    const list = root.querySelectorAll('*');
-    for (let i = 0; i < list.length; i++) { const el = list[i]; acc.push(el); if (el.shadowRoot) deepEls(el.shadowRoot, acc); }
+    let list; try { list = root.querySelectorAll('*'); } catch (e) { return acc; }
+    for (let i = 0; i < list.length; i++) {
+      const el = list[i]; acc.push(el);
+      if (el.shadowRoot) deepEls(el.shadowRoot, acc);
+      const fd = frameDoc(el); if (fd) deepEls(fd, acc);
+    }
     return acc;
   };
+  // 收集所有可查询的根（主文档 + 各 shadowRoot + 同源 iframe 文档），CSS 选择器逐根查询
+  const deepRoots = () => {
+    const roots = [document];
+    for (const el of deepEls(document)) {
+      if (el.shadowRoot) roots.push(el.shadowRoot);
+      const fd = frameDoc(el); if (fd) roots.push(fd);
+    }
+    return roots;
+  };
   const deepQueryAll = (sel) => {
-    const out = [];
-    try { document.querySelectorAll(sel).forEach(e => out.push(e)); } catch (e) { return out; }
-    for (const el of deepEls(document)) if (el.shadowRoot) { try { el.shadowRoot.querySelectorAll(sel).forEach(e => out.push(e)); } catch (e) {} }
-    return Array.from(new Set(out));
+    const out = [], seen = new Set();
+    for (const r of deepRoots()) { try { r.querySelectorAll(sel).forEach(e => { if (!seen.has(e)) { seen.add(e); out.push(e); } }); } catch (e) {} }
+    return out;
   };
   const txt = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
   const attr = (el, n) => (el.getAttribute ? el.getAttribute(n) : null);
@@ -884,9 +910,12 @@ async function locatorAct(spec, op, args, opts) {
     if (el.isContentEditable) return 'textbox';
     return tag;
   };
+  // 跨 frame 安全：用元素自己文档的 view 计算样式
+  const gcs = (el) => ((el.ownerDocument && el.ownerDocument.defaultView) || window).getComputedStyle(el);
   const nameOf = (el) => {
     const a = attr(el, 'aria-label'); if (a) return a.trim();
-    if (el.id) { try { const lab = document.querySelector('label[for="' + ((window.CSS && CSS.escape) ? CSS.escape(el.id) : el.id) + '"]'); if (lab) return txt(lab); } catch (e) {} }
+    const od = el.ownerDocument || document;
+    if (el.id) { try { const lab = od.querySelector('label[for="' + ((window.CSS && CSS.escape) ? CSS.escape(el.id) : el.id) + '"]'); if (lab) return txt(lab); } catch (e) {} }
     const wl = el.closest && el.closest('label'); if (wl) { const t = txt(wl); if (t) return t; }
     const tag = el.tagName.toLowerCase();
     if (tag === 'input' || tag === 'textarea') return attr(el, 'placeholder') || attr(el, 'name') || '';
@@ -895,7 +924,7 @@ async function locatorAct(spec, op, args, opts) {
   const matchStr = (val, want, exact) => { if (want == null) return true; val = (val || '').trim(); return exact ? val === want : val.indexOf(want) !== -1; };
   const visReason = (el) => {
     if (!el || !el.isConnected) return 'detached';
-    const s = getComputedStyle(el);
+    const s = gcs(el);
     if (s.display === 'none') return 'display:none';
     if (s.visibility === 'hidden' || s.visibility === 'collapse') return 'visibility:hidden';
     const r = el.getBoundingClientRect();
@@ -922,7 +951,7 @@ async function locatorAct(spec, op, args, opts) {
     if (spec.ref) { const e = (window.__bridgeRefs || {})[spec.ref]; base = e ? [e] : []; }
     else if (spec.css) base = deepQueryAll(spec.css);
     else base = deepEls(document);
-    if (spec.within) { let c = null; try { c = document.querySelector(spec.within); } catch (e) {} base = c ? base.filter(el => c.contains(el)) : []; }
+    if (spec.within) { const c = deepQueryAll(spec.within)[0] || null; base = c ? base.filter(el => c.contains(el)) : []; }
     const semantic = spec.role || spec.name != null || spec.text != null || spec.testid || spec.label != null || spec.placeholder != null;
     let out = base.filter((el) => {
       if (!el || el.nodeType !== 1) return false;
@@ -1344,6 +1373,86 @@ function installDialogHandler(opts) {
 function getDialogs() {
   const d = window.__bridgeDialogs || [];
   return { dialogs: d, count: d.length };
+}
+
+// ══════════════════════════════════════
+// 录制器（codegen）——记录用户手动的点击/输入，供生成脚本
+// 运行在隔离世界：内容脚本可监听页面真实事件，__bridgeRecorder 跨 executeScript 持久
+// ══════════════════════════════════════
+function installRecorder() {
+  const rec = window.__bridgeRecorder = window.__bridgeRecorder || { steps: [], active: false, listeners: null };
+  if (rec.active) return { ok: true, already: true, steps: rec.steps.length };
+  rec.active = true;
+
+  const txt = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const esc = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s;
+  const roleOf = (el) => {
+    const e = el.getAttribute && el.getAttribute('role'); if (e) return e;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a' && el.hasAttribute('href')) return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'input') { const t = (el.getAttribute('type') || 'text').toLowerCase();
+      if (t === 'checkbox') return 'checkbox'; if (t === 'radio') return 'radio';
+      if (t === 'submit' || t === 'button' || t === 'reset') return 'button'; return 'textbox'; }
+    if (tag === 'textarea') return 'textbox';
+    return tag;
+  };
+  const nameOf = (el) => {
+    const a = el.getAttribute && el.getAttribute('aria-label'); if (a) return a.trim();
+    const wl = el.closest && el.closest('label'); if (wl && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) { const t = txt(wl); if (t) return t; }
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return el.getAttribute('placeholder') || '';
+    return txt(el);
+  };
+  const cssPath = (el) => {
+    if (el.id) return '#' + esc(el.id);
+    const parts = []; let cur = el;
+    while (cur && cur.nodeType === 1 && cur.tagName !== 'BODY' && parts.length < 4) {
+      if (cur.id) { parts.unshift('#' + esc(cur.id)); break; }
+      let sel = cur.tagName.toLowerCase();
+      const p = cur.parentElement;
+      if (p) { const sibs = Array.from(p.children).filter(c => c.tagName === cur.tagName); if (sibs.length > 1) sel += ':nth-of-type(' + (sibs.indexOf(cur) + 1) + ')'; }
+      parts.unshift(sel); cur = cur.parentElement;
+    }
+    return parts.join(' > ');
+  };
+  const locatorFor = (el) => {
+    const testid = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-cy');
+    if (testid) return { testid };
+    if (el.id) return { css: '#' + esc(el.id) };
+    const role = roleOf(el), name = nameOf(el);
+    if (role && name && name.length <= 40) return { role, name };
+    const t = txt(el);
+    if ((el.tagName === 'A' || el.tagName === 'BUTTON' || role === 'button' || role === 'link') && t && t.length <= 40) return { text: t };
+    return { css: cssPath(el) };
+  };
+
+  const onClick = (e) => {
+    const el = e.target; if (!el || el.nodeType !== 1) return;
+    const target = el.closest('a,button,input,select,textarea,[role],[onclick],label') || el;
+    rec.steps.push({ type: 'click', locator: locatorFor(target), at: Date.now() });
+  };
+  const onChange = (e) => {
+    const el = e.target; if (!el || el.nodeType !== 1) return;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      if (type === 'checkbox' || type === 'radio') rec.steps.push({ type: el.checked ? 'check' : 'uncheck', locator: locatorFor(el), at: Date.now() });
+      else rec.steps.push({ type: 'fill', locator: locatorFor(el), value: String(el.value || '').slice(0, 500), at: Date.now() });
+    } else if (tag === 'select') {
+      rec.steps.push({ type: 'select', locator: locatorFor(el), value: el.value, at: Date.now() });
+    }
+  };
+  rec.listeners = { onClick, onChange };
+  document.addEventListener('click', onClick, true);
+  document.addEventListener('change', onChange, true);
+  return { ok: true, installed: true };
+}
+function getRecording() { const r = window.__bridgeRecorder; return { steps: (r && r.steps) || [], active: !!(r && r.active) }; }
+function stopRecorder() {
+  const r = window.__bridgeRecorder;
+  if (r && r.listeners) { try { document.removeEventListener('click', r.listeners.onClick, true); document.removeEventListener('change', r.listeners.onChange, true); } catch (e) {} r.active = false; }
+  return { steps: (r && r.steps) || [], stopped: true };
 }
 
 // 返回已捕获的请求列表

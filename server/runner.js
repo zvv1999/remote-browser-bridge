@@ -293,6 +293,15 @@ class Bridge {
     return this.exec('switch_tab', { tabId });
   }
 
+  // 设为当前目标标签但不激活（后台操控）
+  async setTarget(tabId) {
+    return this.exec('set_target', { tabId });
+  }
+
+  async getTarget() {
+    return this.exec('get_target');
+  }
+
   async createGroup() {
     return this.exec('create_group');
   }

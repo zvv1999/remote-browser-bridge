@@ -43,13 +43,15 @@ exports.main = async (bridge) => {
 | 等待 | `waitForText(text,timeout?)` · `waitForSelector(sel,timeout?)` · `waitUntil(fn,opts?)` · `sleep(ms)` |
 | 信息 | `getPageInfo(includeCookies?)` · `getCookies(url?)` · `getLinks()` · `checkRisk()` |
 | 网络 | `networkIntercept()` · `networkRequests()` · `networkFetch(url,method?,headers?,body?)` · `networkClear()` |
-| 标签 | `listTabs()` · `switchTab(id)` · `closeTab(id)` · `createGroup()` · `listControlledTabs()` |
+| 标签 | `listTabs()` · `setTarget(id)`(后台目标) · `switchTab(id)`(切前台) · `closeTab(id)` · `createGroup()` · `listControlledTabs()` |
 | iframe | `listFrames()`（配合各方法的 `frameId` 参数在指定 iframe 内操作） |
 | 执行 | `evaluate(code)` |
 | Canvas | `installResumeHook()` · `readResumeCanvas()` · `readResumeCanvasFull()` |
 
 也可以直接用底层调用：`bridge.exec('action_name', { ...params }, timeoutMs)`。
 
+> **后台操控**：命令默认作用于"当前目标标签"，**不会把它切到前台**——你可以一边用别的标签，一边让它在后台干活。`setTarget(id)` 设定后台目标（不激活）；`switchTab(id)` 才会切到前台。唯一例外是 `screenshot`：受 Chrome 限制会临时激活目标、截完再切回你原来的标签。
+>
 > **说明**：`getPageInfo(includeCookies)` 默认 `false`，只返回标题/URL/cookie 数量；
 > 传 `true` 才会返回 cookie 值（截断）。`evaluate` 运行在隔离世界（不受页面 CSP 限制，
 > 但读不到页面自身的 JS 变量）；`networkIntercept` / `installResumeHook` 运行在页面主世界，

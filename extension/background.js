@@ -35,6 +35,31 @@ async function restoreRelayState() {
 }
 restoreRelayState();
 
+// ─── 当前目标标签（后台友好）───
+// 记住"当前正在操控的标签页"，让命令能作用于后台标签而不必把它切到前台。
+// 由 switch_tab / set_target / new_tab 设定；持久化到 storage.session 以扛住 SW 回收。
+let currentTargetTabId = null;
+
+async function getTargetTabId() {
+  if (currentTargetTabId != null) return currentTargetTabId;
+  try {
+    const s = await chrome.storage.session.get(['currentTargetTabId']);
+    if (s && s.currentTargetTabId != null) { currentTargetTabId = s.currentTargetTabId; return currentTargetTabId; }
+  } catch (e) {}
+  return null;
+}
+async function setTargetTabId(tabId) {
+  currentTargetTabId = tabId;
+  try { await chrome.storage.session.set({ currentTargetTabId: tabId }); } catch (e) {}
+}
+// 目标标签被关闭时清掉记忆，避免指向已消失的标签
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (currentTargetTabId === tabId) {
+    currentTargetTabId = null;
+    chrome.storage.session.remove('currentTargetTabId').catch(() => {});
+  }
+});
+
 // ─── 标签组权限检查 ───
 async function getControlledGroupId() {
   try {
@@ -72,16 +97,28 @@ async function addTabToControlledGroup(tabId) {
   await chrome.tabs.group({ groupId, tabIds: [tabId] });
 }
 
+// 解析出要操控的受控标签页 —— 关键：不再强制把它切到前台。
+// 除了 screenshot（captureVisibleTab 的硬限制），其余命令都在后台标签上执行，不抢焦点。
 async function getControlledTab() {
-  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (active && await checkTabInControlledGroup(active.id)) {
-    return active;
-  }
   const groupId = await getControlledGroupId();
   if (!groupId) throw new Error(`没有找到 "${CONTROLLED_GROUP}" 标签组。请在 Chrome 中创建一个名为 "${CONTROLLED_GROUP}" 的标签组，或使用 create_group 命令`);
   const tabs = await chrome.tabs.query({ groupId });
   if (tabs.length === 0) throw new Error(`"${CONTROLLED_GROUP}" 标签组为空`);
-  await chrome.tabs.update(tabs[0].id, { active: true });
+
+  // 1) 优先用记忆里的"当前目标标签"（前提是它还在受控组里）
+  const savedId = await getTargetTabId();
+  if (savedId != null) {
+    const saved = tabs.find(t => t.id === savedId);
+    if (saved) return saved;
+  }
+  // 2) 若你此刻前台正看的标签恰好在组里，用它并记住
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active && tabs.some(t => t.id === active.id)) {
+    await setTargetTabId(active.id);
+    return active;
+  }
+  // 3) 否则退回组里第一个标签，但**不激活它**（后台执行）
+  await setTargetTabId(tabs[0].id);
   return tabs[0];
 }
 
@@ -163,10 +200,21 @@ async function executeAction(action, params) {
     case 'list_tabs': {
       const tabs = await chrome.tabs.query({});
       const cgid = await getControlledGroupId();
+      const targetId = await getTargetTabId();
       return tabs.map(t => {
         const controlled = t.groupId !== -1 && t.groupId === cgid;
-        return { id: t.id, url: t.url, title: t.title, active: t.active, controlled };
+        return { id: t.id, url: t.url, title: t.title, active: t.active, controlled, target: t.id === targetId };
       });
+    }
+    // 把某个受控标签设为"当前目标"，但不激活它（后台操控用）
+    case 'set_target': {
+      if (!(await checkTabInControlledGroup(params.tabId)))
+        throw new Error(`标签页 ${params.tabId} 不在 "${CONTROLLED_GROUP}" 组中`);
+      await setTargetTabId(params.tabId);
+      return { target: params.tabId };
+    }
+    case 'get_target': {
+      return { target: await getTargetTabId() };
     }
   }
 
@@ -182,9 +230,11 @@ async function executeAction(action, params) {
       await waitForPageLoad(tab.id);
       return { url: params.url, title: (await chrome.tabs.get(tab.id)).title };
     case 'new_tab': {
-      const newTab = await chrome.tabs.create({ url: params.url || 'about:blank' });
+      // 默认后台打开（active:false），不抢焦点；需要弹到前台时传 params.active:true
+      const newTab = await chrome.tabs.create({ url: params.url || 'about:blank', active: params.active === true });
       await waitForPageLoad(newTab.id);
       try { await addTabToControlledGroup(newTab.id); } catch(e) {}
+      await setTargetTabId(newTab.id); // 新标签成为后续操作的默认目标
       return { tabId: newTab.id, url: newTab.url, title: newTab.title, inGroup: CONTROLLED_GROUP };
     }
     case 'close_tab': {
@@ -196,9 +246,11 @@ async function executeAction(action, params) {
       return { closed: true, tabId: targetTab };
     }
     case 'switch_tab':
+      // 显式"切到前台"：既激活也设为目标
       if (!await checkTabInControlledGroup(params.tabId))
         throw new Error(`标签页 ${params.tabId} 不在 "${CONTROLLED_GROUP}" 组中`);
       await chrome.tabs.update(params.tabId, { active: true });
+      await setTargetTabId(params.tabId);
       return { switched: params.tabId };
 
     // ── iframe ──
@@ -318,9 +370,24 @@ async function executeAction(action, params) {
     case 'screenshot':
     case 'viewport_screenshot': {
       const format = params.format || 'png';
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format });
-      const vp = await executeInTab(tab.id, getViewport, [], frameId);
-      return { format, dataUrl, viewport: vp };
+      // captureVisibleTab 只能截"窗口里当前可见的标签"（Chrome 硬限制）。
+      // 若目标标签不在前台：临时激活它 → 截图 → 再切回你原来的标签，尽量少打扰。
+      const [prevActive] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+      const mustSwitch = !prevActive || prevActive.id !== tab.id;
+      try {
+        if (mustSwitch) {
+          await chrome.tabs.update(tab.id, { active: true });
+          await sleep(250); // 等这一帧渲染出来再截
+        }
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format });
+        const vp = await executeInTab(tab.id, getViewport, [], frameId);
+        return { format, dataUrl, viewport: vp, refocused: mustSwitch };
+      } finally {
+        // 无论成败，都把焦点还给你原来的标签
+        if (mustSwitch && prevActive) {
+          try { await chrome.tabs.update(prevActive.id, { active: true }); } catch (e) {}
+        }
+      }
     }
     case 'snapshot':
       return await executeInTab(tab.id, getPageSnapshot, [params.maxLength || 8000], frameId);

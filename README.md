@@ -102,6 +102,7 @@ node server/runner.js examples/quickstart.js --port=3006 --token=xxx
 
 ## 说明
 
+- **后台操控**：命令默认作用于「当前目标标签」，不会把它切到前台——你可以一边用别的标签/窗口，一边让它在后台自动化。`switch_tab` 才会切到前台；`screenshot` 因 Chrome 限制会临时切一下再切回。详见 [CHANGES.md](CHANGES.md) 的 v1.5.0。
 - 扩展每 30 秒推送一次受控标签页信息到控制台（也会在页面变化时即时推送）。
 - Bridge 服务 90 秒无心跳会自动断开该会话；服务重启后刷新控制台页面即可重连。
 - 本版本相对原始 v1.3.0 的全部修复见 **[CHANGES.md](CHANGES.md)**。

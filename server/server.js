@@ -499,7 +499,8 @@ function getConsoleHTML(req) {
       <option value="get_cookies">查看 Cookies</option>
       <option value="get_page_info">页面信息</option>
       <option value="list_tabs">列出标签页</option>
-      <option value="switch_tab">切换标签页</option>
+      <option value="set_target">设为目标(不切前台)</option>
+      <option value="switch_tab">切换标签页(切前台)</option>
       <option value="close_tab">关闭标签页</option>
       <option value="list_frames">列出 iframe</option>
       <option value="network_intercept">捕获网络请求</option>
@@ -642,6 +643,7 @@ function getConsoleHTML(req) {
             ? '<img class="favicon" src="' + escapeHtml(t.favIconUrl) + '" onerror="this.style.display=\\'none\\'">'
             : '<span class="favicon">📄</span>';
           var badges = '';
+          if (t.target) badges += '<span class="t-badge" style="background:rgba(124,140,248,.25);color:#a9b4ff">🎯 目标</span>';
           if (t.active) badges += '<span class="t-badge active">active</span>';
           var cookieBadge = t.cookieCount !== undefined
             ? '<span class="t-badge cookies">🍪' + (Number(t.cookieCount)||0) + '</span>' : '';
@@ -668,12 +670,12 @@ function getConsoleHTML(req) {
 
   function selectTab(tabId) {
     selectedTabId = tabId;
-    // 切换到该标签（可能在后台）
+    // 只把它设为"当前目标"，不激活到前台（后台友好）。要切到前台请用标签上的 ▶ 按钮。
     if (selectedBrowser) {
       fetch(BASE + '/api/command', {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({action: 'switch_tab', params: {tabId: tabId}, browserId: selectedBrowser, timeout: 3000})
+        body: JSON.stringify({action: 'set_target', params: {tabId: tabId}, browserId: selectedBrowser, timeout: 3000})
       }).catch(function(){});
     }
     refreshTabs();
@@ -822,6 +824,7 @@ function getConsoleHTML(req) {
         params.includeCookies = true;
         break;
       case 'list_tabs': break;
+      case 'set_target': params.tabId = parseInt(param); break;
       case 'switch_tab': params.tabId = parseInt(param); break;
       case 'close_tab':
         if (param) params.tabId = parseInt(param);

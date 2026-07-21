@@ -1,5 +1,17 @@
 # 变更记录
 
+## v1.7.0 — 内置 MCP Server（让 AI Agent 用你的浏览器）
+
+新增 `mcp/server.js`：把浏览器操控能力暴露成 [MCP](https://modelcontextprotocol.io) 工具，Claude Code / Claude Desktop / Cursor 等任何支持 MCP 的 Agent 都能直接调用，用你本人的登录态操作网页。
+
+- **零依赖**：手写 MCP stdio 协议（newline-delimited JSON-RPC 2.0），只用 Node 内置模块，无需 `npm install`。复用 `server/runner.js` 的 `Bridge` 打到 bridge 服务。
+- **13 个工具**：`browser_snapshot`（结构化 ref 快照，感知首选）、`browser_navigate`、`browser_click`、`browser_type`（可回车提交）、`browser_press_key`、`browser_screenshot`（返回 PNG 图片给视觉模型）、`browser_read_text`、`browser_wait_for_text`、`browser_get_page_info`、`browser_new_tab`、`browser_list_tabs`、`browser_set_target`、`browser_evaluate`。
+- **鉴权自动打通**：token 从 `BRIDGE_TOKEN` 或多个候选 `.bridge-token` 路径解析；日志全部走 stderr 以免污染 stdio 协议通道。
+- 配置方式与工具清单见 [mcp/README.md](mcp/README.md)；`package.json` 增加 `npm run mcp` 与 `remote-bridge-mcp` bin。
+
+> 注：这是**服务端新增**，Chrome 扩展本身未改动（仍为 1.6.0）；本版本号指仓库发布版本。
+> 典型 Agent 用法：`browser_snapshot` 看清页面 → `browser_type{ref,text,submit}` → `browser_wait_for_text` → 再 `browser_snapshot`。
+
 ## v1.6.0 — 结构化 ref 快照（对 LLM/Agent 友好）
 
 给页面做一份「无障碍树」式的结构化快照，每个可交互元素带稳定编号 `[e1] [e2]…`，然后**按编号操作**，不用再写脆弱的 CSS 选择器 —— 这是让 AI Agent 可靠驱动页面的地基。

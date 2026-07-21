@@ -13,6 +13,8 @@
 
 ## 功能亮点
 
+- 🤖 **给 AI Agent 用（MCP）** — 内置零依赖 MCP server，Claude Code / Cursor 等可直接调用 `browser_snapshot`/`browser_click`/`browser_type` 等工具，用你本人的登录态操作网页。见 [mcp/README.md](mcp/README.md)。
+- 🧭 **结构化 ref 快照** — `snapshot_refs` 给每个可交互元素编号 `[eN]`，按编号点击/输入，比 CSS 选择器稳，对 LLM 友好。
 - 🖥️ **后台操控** — 命令作用于「当前目标标签」而**不抢焦点**，你可以一边用别的标签/窗口，一边让它在后台自动化（仅截图因 Chrome 限制会临时切一下再切回）。
 - 🔒 **安全隔离** — 只操控 `Remote Control` 标签组内的页面，其它标签页绝不触碰。
 - 🔑 **强制 token 鉴权** — 所有 `/api/*` 都要求自动生成的 token；token 自动内嵌进控制台页、扩展与前端自动携带，`runner.js` 从 `.bridge-token` 自动读取，你几乎无感。
@@ -42,6 +44,7 @@
 - **`extension/`** — Chrome MV3 扩展（解压源码，可直接"加载已解压的扩展"）
 - **`server/server.js`** — bridge 服务：控制台页面 + REST API（零依赖，纯 Node）
 - **`server/runner.js`** — 通用自动化引擎（`Bridge` 类 + CLI）
+- **`mcp/server.js`** — 零依赖 MCP server，给 AI Agent 调用（[说明](mcp/README.md)）
 - **`examples/`** — 通用示例（[说明与 API 参考](examples/README.md)）
 
 ---
@@ -112,6 +115,26 @@ node server/runner.js examples/quickstart.js --port=3006 --token=xxx
 ```
 
 完整 API 列表与写脚本方式见 **[examples/README.md](examples/README.md)**。
+
+---
+
+## 给 AI Agent 用（MCP）
+
+内置零依赖 MCP server，让 Claude Code / Claude Desktop / Cursor 等直接用你的浏览器。前提是 bridge 服务已启动、扩展已连上。在客户端的 `mcpServers` 里加：
+
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "command": "node",
+      "args": ["/绝对路径/remote-browser-bridge/mcp/server.js"],
+      "env": { "BRIDGE_PORT": "3006", "BRIDGE_TOKEN": "见 bridge 启动日志" }
+    }
+  }
+}
+```
+
+提供 `browser_snapshot` / `browser_navigate` / `browser_click` / `browser_type` / `browser_screenshot` 等 13 个工具。详见 **[mcp/README.md](mcp/README.md)**。
 
 ---
 

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Remote Bridge</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 300px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; color: #e0e0e0; background: #1e1e2e; padding: 16px; }
+  h1 { font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .status-dot.on { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+  .status-dot.off { background: #f44336; }
+  .card { background: #2a2a3e; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: all .2s; width: 100%; }
+  .btn-primary { background: #7c8cf8; color: #fff; }
+  .btn-primary:hover { background: #6b7aee; }
+  .btn-sm { padding: 6px 12px; font-size: 11px; width: auto; }
+  input { padding: 6px 10px; border-radius: 5px; border: 1px solid #444; background: #1a1a2e; color: #e0e0e0; font-size: 11px; width: 100%; margin-top: 6px; }
+  .status-bar { padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-top: 8px; line-height: 1.6; min-height: 40px; }
+  .status-bar.connected { background: rgba(76,175,80,.15); color: #81c784; }
+  .status-bar.disconnected { background: rgba(244,67,54,.15); color: #e57373; }
+  .info { font-size: 11px; color: #888; margin-top: 4px; }
+  code { background: #333; padding: 1px 4px; border-radius: 3px; font-size: 11px; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>
+  <span class="status-dot off" id="statusDot"></span>
+  Remote Bridge
+</h1>
+
+<div class="card">
+  <p style="font-size:13px;margin-bottom:8px;">🔗 Relay 模式 — 通过控制台页面通信</p>
+  <input type="text" id="bridgeUrlInput" placeholder="https://你的域名/_/port/3006/">
+  <div style="display:flex;gap:6px;margin-top:6px">
+    <button class="btn btn-primary btn-sm" id="btnSave" style="flex:1">💾 保存</button>
+    <button class="btn btn-primary btn-sm" id="btnOpenConsole" style="flex:2">🔗 打开控制台</button>
+  </div>
+</div>
+
+<div class="status-bar disconnected" id="statusBar">
+  ⚫ 未连接 — 请打开控制台页面
+</div>
+
+<div class="info" style="margin-top:12px;text-align:center;">
+  v1.4 — Relay Mode
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

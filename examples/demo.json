@@ -1,0 +1,40 @@
+{
+  "name": "通用声明式示例",
+  "description": "打开页面 → 等待文字 → 读取信息 → 提取链接 → 截图（纯 JSON 声明式，无需写代码）",
+  "steps": [
+    {
+      "action": "new_tab",
+      "params": { "url": "https://example.com" },
+      "store": "tab"
+    },
+    { "sleep": 2000 },
+    {
+      "action": "wait_for_text",
+      "params": { "text": "Example", "timeout": 10000 }
+    },
+    {
+      "action": "get_page_info",
+      "params": { "includeCookies": false },
+      "store": "info"
+    },
+    { "print": "页面标题: {{info.title}}" },
+    { "print": "页面地址: {{info.url}}" },
+    {
+      "action": "get_links",
+      "store": "links"
+    },
+    { "print": "链接数量: {{links.total}}" },
+    {
+      "if": {
+        "cond": "{{links.total}} > 0",
+        "then": [ { "print": "✅ 页面已加载并提取到链接" } ],
+        "else": [ { "print": "⚠️ 未提取到链接，页面可能未加载完成" } ]
+      }
+    },
+    {
+      "action": "screenshot",
+      "store": "shot"
+    },
+    { "print": "截图已获取，可在控制台「截图」面板查看" }
+  ]
+}

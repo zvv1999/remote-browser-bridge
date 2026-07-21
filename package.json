@@ -1,0 +1,26 @@
+{
+  "name": "remote-browser-bridge",
+  "version": "1.4.0",
+  "description": "让 CodeNext（云端 IDE）通过一个 Chrome 扩展远程操控本地浏览器 —— 纯 HTTP 长轮询，只操控名为 Remote Control 的标签组。",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "bin": { "remote-bridge-run": "server/runner.js" },
+  "scripts": {
+    "start": "node server/server.js",
+    "server": "node server/server.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "browser-automation",
+    "codenext",
+    "remote-browser",
+    "long-polling",
+    "manifest-v3"
+  ],
+  "license": "MIT",
+  "author": "zvv1999",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zvv1999/remote-browser-bridge.git"
+  }
+}

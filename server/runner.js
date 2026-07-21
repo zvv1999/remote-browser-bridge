@@ -171,6 +171,51 @@ class Bridge {
     return this.exec('get_ref', { ref });
   }
 
+  // ── 定位器 + 自动等待（Playwright 式）──
+  // spec: { css | ref | role+name | text | testid | label | placeholder, within, nth, hasText, exact }
+  // 用法：await bridge.getByRole('button','登录').click()
+  //       await bridge.getByLabel('用户名').fill('admin')
+  //       await bridge.locator({ text:'结果' }).waitFor()
+  locator(spec) {
+    const self = this;
+    const run = (op, args, opts) => {
+      const t = (opts && opts.timeout) || 15000;
+      return self.exec('locator_act', { spec, op, args: args || {}, opts: { timeout: t } }, t + 5000)
+        .then((r) => { if (r && r.error) throw new Error(r.error); return r; });
+    };
+    const derive = (extra) => self.locator(Object.assign({}, spec, extra));
+    return {
+      spec,
+      click: (opts) => run('click', {}, opts),
+      dblclick: (opts) => run('dblclick', {}, opts),
+      hover: (opts) => run('hover', {}, opts),
+      fill: (text, opts) => run('fill', { text }, opts),
+      type: (text, opts) => run('type', { text }, opts),
+      check: (opts) => run('check', {}, opts),
+      uncheck: (opts) => run('uncheck', {}, opts),
+      selectOption: (value, opts) => run('selectOption', { value }, opts),
+      press: (key, opts) => run('press', { key }, opts),
+      scrollIntoView: (opts) => run('scrollIntoView', {}, opts),
+      waitFor: (opts) => run('waitFor', { state: (opts && opts.state) || 'visible' }, opts),
+      getText: (opts) => run('getText', {}, opts).then((r) => r && r.text),
+      getValue: (opts) => run('getValue', {}, opts).then((r) => r && r.value),
+      getAttribute: (name, opts) => run('getAttribute', { name }, opts).then((r) => r && r.value),
+      // isVisible/count 不等待（0 也是有效答案）
+      isVisible: () => self.exec('locator_act', { spec, op: 'isVisible', opts: { timeout: 1000 } }, 6000).then((r) => !!(r && r.visible)),
+      count: () => self.exec('locator_act', { spec, op: 'count', opts: { timeout: 1000 } }, 6000).then((r) => (r && r.count) || 0),
+      nth: (n) => derive({ nth: n }),
+      first: () => derive({ nth: 0 }),
+      last: () => derive({ nth: -1 }),
+      withText: (t) => derive({ hasText: t }),
+      within: (css) => derive({ within: css }),
+    };
+  }
+  getByRole(role, name) { return this.locator(name != null ? { role, name } : { role }); }
+  getByText(text, exact) { return this.locator({ text, exact: !!exact }); }
+  getByLabel(label, exact) { return this.locator({ label, exact: !!exact }); }
+  getByPlaceholder(placeholder, exact) { return this.locator({ placeholder, exact: !!exact }); }
+  getByTestId(testid) { return this.locator({ testid }); }
+
   async screenshot() {
     return this.exec('screenshot');
   }

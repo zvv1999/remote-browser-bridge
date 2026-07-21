@@ -1,5 +1,15 @@
 # 变更记录
 
+## v1.9.0 — 定位器 + 自动等待（向 Playwright 手感看齐）
+
+补上"自动化不如 Playwright"最关键的两块——**自动等待**和**语义定位器**，还顺带做了 **Shadow DOM 穿透**，都在扩展内、零新权限。
+
+- **自动等待 (actionability)**：新引擎在超时前反复"解析定位器 → 检查存在+可见+可用 → 执行"，动作前自动等元素就绪并滚动到视口，**免去到处手写 `sleep`/`wait_for`**；失败会报最后原因（not found / display:none / disabled…）。
+- **语义定位器**：`bridge.getByRole(role,name)` / `getByText` / `getByLabel` / `getByPlaceholder` / `getByTestId` / `locator({css|ref|role|text|testid|label|placeholder, within, nth, hasText, exact})`，返回可链式句柄：`.click()/.fill()/.type()/.hover()/.check()/.uncheck()/.selectOption()/.press()/.waitFor()/.getText()/.isVisible()/.count()/.nth()/.within()`。`check` **幂等**（不会把已勾选的切掉）。
+- **Shadow DOM 穿透**：定位器与 `snapshot_refs` 现在都会下钻**开放** shadow root（很多 Web Component 之前定位不到）。
+- 底层新增 `locator_act` 动作（扩展内 `locatorAct` 引擎）。已对真实 DOM 端到端验证：自动等待迟到元素、按 role/text/testid/label 定位、fill/check 幂等、shadow 穿透、隐藏元素正确拒绝并超时报因。
+- 注：动作在**后台标签**里的自动等待粒度受 Chrome 定时器节流影响约 ~1s（前台 ~100ms），功能正确、只是更粗。可信输入事件/全量网络 mock/文件上传等仍需 `chrome.debugger`，本版未引入（按需再说）。
+
 ## v1.8.0 — 人工接管 + 钉钉通知
 
 让脚本/Agent 遇到必须真人做的环节（登录、验证码、二次确认）时**暂停等你处理**，处理完点「继续」再往下跑；并可在需要注意时推送钉钉。

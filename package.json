@@ -1,6 +1,6 @@
 {
   "name": "remote-browser-bridge",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "让 CodeNext（云端 IDE）/ AI Agent 通过一个 Chrome 扩展远程操控本地浏览器 —— 纯 HTTP 长轮询，只操控名为 Remote Control 的标签组，内置 MCP server。",
   "type": "commonjs",
   "engines": { "node": ">=18" },

@@ -40,6 +40,7 @@ exports.main = async (bridge) => {
 | DOM | `click(sel,index?)` · `type(sel,text)` · `clickText(text)` · `pressKey(sel,key)` · `select(sel,val)` |
 | 读取 | `snapshot(maxLen?)` · `screenshot()` · `getHtml(sel)` · `getText(sel)` · `getAttribute(sel,attr)` |
 | **Ref（推荐给 Agent）** | `snapshotRefs(maxNodes?)` · `clickRef(ref)` · `typeRef(ref,text)` · `getRef(ref)` |
+| **定位器（自动等待，推荐写脚本）** | `getByRole(role,name)` · `getByText(t)` · `getByLabel(t)` · `getByPlaceholder(t)` · `getByTestId(id)` · `locator(spec)` |
 | 页面 | `scroll(x,y)` · `scrollToBottom()` · `scrollIntoView(sel)` · `dismissOverlays()` |
 | 等待 | `waitForText(text,timeout?)` · `waitForSelector(sel,timeout?)` · `waitUntil(fn,opts?)` · `sleep(ms)` |
 | 信息 | `getPageInfo(includeCookies?)` · `getCookies(url?)` · `getLinks()` · `checkRisk()` |
@@ -52,6 +53,8 @@ exports.main = async (bridge) => {
 
 也可以直接用底层调用：`bridge.exec('action_name', { ...params }, timeoutMs)`。
 
+> **定位器 + 自动等待（写脚本更稳）**：`getByRole/getByText/getByLabel/getByPlaceholder/getByTestId` 或 `locator({...})` 返回一个可链式操作的句柄，动作前**自动等待**元素出现→可见→可用（免去手动 `sleep`/`waitFor`），并**穿透开放 Shadow DOM**。例：`await bridge.getByRole('button','登录').click()`、`await bridge.getByLabel('用户名').fill('admin')`、`await bridge.locator({text:'结果'}).waitFor()`。`check` 是幂等的（不会把已勾选的切掉）。
+>
 > **Ref 快照（给 LLM/Agent 用）**：`snapshotRefs()` 返回带编号的元素清单（`[e1] link "登录"`、`[e3] textbox "用户名"`…）和结构化 `elements` 数组；随后用 `clickRef('e3')` / `typeRef('e5','文本')` 按编号操作，无需 CSS 选择器。比把原始 HTML 喂给模型更稳、更省 token。页面变化后 ref 会失效，重新 `snapshotRefs()` 即可。
 >
 > **后台操控**：命令默认作用于"当前目标标签"，**不会把它切到前台**——你可以一边用别的标签，一边让它在后台干活。`setTarget(id)` 设定后台目标（不激活）；`switchTab(id)` 才会切到前台。唯一例外是 `screenshot`：受 Chrome 限制会临时激活目标、截完再切回你原来的标签。

@@ -408,6 +408,11 @@ async function executeAction(action, params) {
       if (!params.ref) throw new Error('ref param required for get_ref');
       return await executeInTab(tab.id, getRefInfo, [params.ref], frameId);
 
+    // 定位器 + 自动等待 + 执行（Playwright 式）——见 locatorAct
+    case 'locator_act':
+      if (!params.op) throw new Error('op param required for locator_act');
+      return await executeInTab(tab.id, locatorAct, [params.spec || {}, params.op, params.args || {}, params.opts || {}], frameId);
+
     case 'get_text':
       return await executeInTab(tab.id, getElementText, [params.selector], frameId);
     case 'get_attribute':
@@ -747,6 +752,11 @@ function buildRefSnapshot(maxNodes) {
     }
     const kids = el.children;
     for (let i = 0; i < kids.length && n < LIMIT; i++) walk(kids[i]);
+    // 穿透开放 Shadow DOM
+    if (el.shadowRoot) {
+      const sk = el.shadowRoot.children;
+      for (let i = 0; i < sk.length && n < LIMIT; i++) walk(sk[i]);
+    }
   };
   walk(document.body || document.documentElement);
 
@@ -813,6 +823,166 @@ function getRefInfo(ref) {
     visible: el.offsetParent !== null,
     rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
   };
+}
+
+// ══════════════════════════════════════
+// 定位器 + 自动等待 + 执行（对齐 Playwright 的 locator/actionability）
+//   spec: { css | ref | role+name | text | testid | label | placeholder, within, nth, hasText, exact }
+//   op:   click/dblclick/hover/fill/type/check/uncheck/selectOption/press/
+//         waitFor/getText/getValue/getAttribute/isVisible/count/scrollIntoView
+//   在超时前反复：解析定位器 → 检查可操作性(存在+可见+可用) → 执行；否则报最后失败原因。
+//   支持穿透开放 Shadow DOM。
+// ══════════════════════════════════════
+async function locatorAct(spec, op, args, opts) {
+  spec = spec || {}; args = args || {}; opts = opts || {};
+  const timeout = opts.timeout || 15000;
+  const deadline = Date.now() + timeout;
+
+  const deepEls = (root, acc) => {
+    acc = acc || [];
+    const list = root.querySelectorAll('*');
+    for (let i = 0; i < list.length; i++) { const el = list[i]; acc.push(el); if (el.shadowRoot) deepEls(el.shadowRoot, acc); }
+    return acc;
+  };
+  const deepQueryAll = (sel) => {
+    const out = [];
+    try { document.querySelectorAll(sel).forEach(e => out.push(e)); } catch (e) { return out; }
+    for (const el of deepEls(document)) if (el.shadowRoot) { try { el.shadowRoot.querySelectorAll(sel).forEach(e => out.push(e)); } catch (e) {} }
+    return Array.from(new Set(out));
+  };
+  const txt = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const attr = (el, n) => (el.getAttribute ? el.getAttribute(n) : null);
+  const roleOf = (el) => {
+    const e = attr(el, 'role'); if (e) return e;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a' && el.hasAttribute('href')) return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'input') { const t = (attr(el, 'type') || 'text').toLowerCase();
+      if (t === 'checkbox') return 'checkbox'; if (t === 'radio') return 'radio';
+      if (t === 'submit' || t === 'button' || t === 'reset') return 'button';
+      if (t === 'search') return 'searchbox'; return 'textbox'; }
+    if (/^h[1-6]$/.test(tag)) return 'heading';
+    if (el.isContentEditable) return 'textbox';
+    return tag;
+  };
+  const nameOf = (el) => {
+    const a = attr(el, 'aria-label'); if (a) return a.trim();
+    if (el.id) { try { const lab = document.querySelector('label[for="' + ((window.CSS && CSS.escape) ? CSS.escape(el.id) : el.id) + '"]'); if (lab) return txt(lab); } catch (e) {} }
+    const wl = el.closest && el.closest('label'); if (wl) { const t = txt(wl); if (t) return t; }
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return attr(el, 'placeholder') || attr(el, 'name') || '';
+    return txt(el) || attr(el, 'title') || '';
+  };
+  const matchStr = (val, want, exact) => { if (want == null) return true; val = (val || '').trim(); return exact ? val === want : val.indexOf(want) !== -1; };
+  const visReason = (el) => {
+    if (!el || !el.isConnected) return 'detached';
+    const s = getComputedStyle(el);
+    if (s.display === 'none') return 'display:none';
+    if (s.visibility === 'hidden' || s.visibility === 'collapse') return 'visibility:hidden';
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return 'zero-size';
+    return null;
+  };
+  const actReason = (el) => {
+    const v = visReason(el); if (v) return v;
+    if (el.disabled) return 'disabled';
+    if (attr(el, 'aria-disabled') === 'true') return 'aria-disabled';
+    return null;
+  };
+  const interactiveish = (el) => {
+    const tag = el.tagName.toLowerCase();
+    return ['a', 'button', 'input', 'select', 'textarea'].includes(tag) ||
+      ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option', 'switch'].includes(attr(el, 'role')) ||
+      el.hasAttribute('onclick') || el.isContentEditable;
+  };
+  const hasCriteria = spec.css || spec.ref || spec.role || spec.name != null || spec.text != null || spec.testid || spec.label != null || spec.placeholder != null;
+
+  const resolveAll = () => {
+    if (!hasCriteria) return [];
+    let base;
+    if (spec.ref) { const e = (window.__bridgeRefs || {})[spec.ref]; base = e ? [e] : []; }
+    else if (spec.css) base = deepQueryAll(spec.css);
+    else base = deepEls(document);
+    if (spec.within) { let c = null; try { c = document.querySelector(spec.within); } catch (e) {} base = c ? base.filter(el => c.contains(el)) : []; }
+    const semantic = spec.role || spec.name != null || spec.text != null || spec.testid || spec.label != null || spec.placeholder != null;
+    let out = base.filter((el) => {
+      if (!el || el.nodeType !== 1) return false;
+      if (spec.role && roleOf(el) !== spec.role) return false;
+      if (spec.name != null && !matchStr(nameOf(el), spec.name, spec.exact)) return false;
+      if (spec.text != null && !matchStr(txt(el), spec.text, spec.exact)) return false;
+      if (spec.testid && !(attr(el, 'data-testid') === spec.testid || attr(el, 'data-test') === spec.testid || attr(el, 'data-cy') === spec.testid)) return false;
+      if (spec.placeholder != null && !matchStr(attr(el, 'placeholder'), spec.placeholder, spec.exact)) return false;
+      if (spec.label != null) {
+        const tag = el.tagName.toLowerCase();
+        if (!(tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable)) return false;
+        if (!matchStr(nameOf(el), spec.label, spec.exact)) return false;
+      }
+      return true;
+    });
+    out = Array.from(new Set(out));
+    if (semantic) out.sort((a, b) => {
+      const va = visReason(a) ? 1 : 0, vb = visReason(b) ? 1 : 0; if (va !== vb) return va - vb; // 可见优先
+      if (spec.text != null) { const ia = interactiveish(a) ? 0 : 1, ib = interactiveish(b) ? 0 : 1; if (ia !== ib) return ia - ib; return txt(a).length - txt(b).length; }
+      return 0;
+    });
+    if (spec.hasText != null) out = out.filter(el => txt(el).indexOf(spec.hasText) !== -1);
+    return out;
+  };
+  const pick = (els) => { if (!els.length) return null; let n = (spec.nth != null) ? spec.nth : 0; if (n < 0) n = els.length + n; return els[n] || null; };
+
+  if (!hasCriteria) return { error: '空定位器：至少提供 css/ref/role/text/testid/label/placeholder 之一' };
+  if (op === 'count') return { count: resolveAll().length };
+  if (op === 'isVisible') { const el = pick(resolveAll()); return { visible: !!el && !visReason(el) }; }
+
+  const nativeSet = (el, v) => { const p = (el instanceof HTMLTextAreaElement) ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; const d = Object.getOwnPropertyDescriptor(p, 'value'); (d && d.set) ? d.set.call(el, v) : (el.value = v); };
+  const fillEl = (el, text, clear) => {
+    el.focus();
+    if (el.isContentEditable) {
+      if (clear) { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('delete'); }
+      document.execCommand('insertText', false, text); el.dispatchEvent(new Event('input', { bubbles: true })); return;
+    }
+    nativeSet(el, (clear ? '' : (el.value || '')) + text);
+    el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const doAction = (el) => {
+    switch (op) {
+      case 'click': try { el.click(); } catch (e) { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } return { ok: true, op, tag: el.tagName, text: txt(el).slice(0, 80) };
+      case 'dblclick': el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); return { ok: true, op };
+      case 'hover': ['pointerover', 'mouseover', 'mouseenter', 'mousemove'].forEach(t => el.dispatchEvent(new MouseEvent(t, { bubbles: t !== 'mouseenter', cancelable: true }))); return { ok: true, op };
+      case 'fill': fillEl(el, args.text || '', true); return { ok: true, op, tag: el.tagName };
+      case 'type': fillEl(el, args.text || '', false); return { ok: true, op, tag: el.tagName };
+      case 'check': if (!el.checked) el.click(); return { ok: true, op, checked: !!el.checked };
+      case 'uncheck': if (el.checked) el.click(); return { ok: true, op, checked: !!el.checked };
+      case 'selectOption': el.value = args.value; el.dispatchEvent(new Event('change', { bubbles: true })); return { ok: true, op, value: el.value };
+      case 'press': el.focus(); ['keydown', 'keypress', 'keyup'].forEach(t => el.dispatchEvent(new KeyboardEvent(t, { key: args.key, bubbles: true }))); return { ok: true, op, key: args.key };
+      case 'getText': return { text: txt(el) };
+      case 'getValue': return { value: (el.value !== undefined) ? el.value : null };
+      case 'getAttribute': return { value: attr(el, args.name) };
+      case 'scrollIntoView': el.scrollIntoView({ block: 'center' }); return { ok: true };
+      default: return { error: 'unknown op: ' + op };
+    }
+  };
+  const readOnly = (op === 'getText' || op === 'getValue' || op === 'getAttribute');
+
+  let lastReason = 'not found';
+  while (Date.now() < deadline) {
+    const el = pick(resolveAll());
+    if (op === 'waitFor') {
+      const state = args.state || 'visible';
+      if (state === 'attached') { if (el) return { ok: true, state }; lastReason = 'not attached'; }
+      else if (state === 'detached') { if (!el) return { ok: true, state }; lastReason = 'still attached'; }
+      else if (state === 'hidden') { if (!el || visReason(el)) return { ok: true, state }; lastReason = 'still visible'; }
+      else { if (el && !visReason(el)) return { ok: true, state }; lastReason = el ? visReason(el) : 'not found'; }
+    } else if (el) {
+      const reason = readOnly ? null : actReason(el);
+      if (!reason) { if (!readOnly) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} } return doAction(el); }
+      lastReason = reason;
+    } else { lastReason = 'not found'; }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return { error: `等待超时 (${timeout}ms) op=${op} locator=${JSON.stringify(spec)} — 最后状态: ${lastReason}` };
 }
 
 // ══════════════════════════════════════

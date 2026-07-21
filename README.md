@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-![version](https://img.shields.io/badge/version-1.8.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.9.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 让 **CodeNext**（云端 IDE / 容器）或 **AI Agent** 通过一个 Chrome 扩展**远程操控你本地的浏览器**。
 纯 HTTP 长轮询，无需 WebSocket；扩展**只操控名为 `Remote Control` 的标签组**，其它标签页完全不受影响。
@@ -18,6 +18,7 @@
 ## 功能亮点
 
 - 🤖 **给 AI Agent 用（MCP）** — 内置零依赖 MCP server，Claude Code / Cursor 等可直接调用 `browser_snapshot`/`browser_click`/`browser_type` 等工具，用你本人的登录态操作网页。见 [mcp/README.md](mcp/README.md)。
+- 🎯 **定位器 + 自动等待（Playwright 手感）** — `getByRole/getByText/getByLabel/getByTestId` 或 `locator({...})`，动作前自动等元素出现→可见→可用，免手写 `sleep`；穿透开放 Shadow DOM。
 - 🧭 **结构化 ref 快照** — `snapshot_refs` 给每个可交互元素编号 `[eN]`，按编号点击/输入，比 CSS 选择器稳，对 LLM 友好。
 - 🙋 **人工接管 + 钉钉通知** — 脚本/Agent 遇到登录/验证码可 `waitForHuman()` 暂停，控制台弹出接管横幅并推送钉钉，你处理完点「继续」再往下跑；`pauseIfRisky()` 检测到风控自动暂停。
 - 🖥️ **后台操控** — 命令作用于「当前目标标签」而**不抢焦点**，你可以一边用别的标签/窗口，一边让它在后台自动化（仅截图因 Chrome 限制会临时切一下再切回）。

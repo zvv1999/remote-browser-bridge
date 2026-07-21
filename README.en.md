@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-![version](https://img.shields.io/badge/version-1.8.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.9.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 Drive your **local** Chrome from a cloud IDE (**CodeNext**) or an **AI agent**, through a small
 MV3 extension + a zero-dependency Node bridge. HTTP long-polling only, no WebSocket. The
@@ -21,6 +21,9 @@ is left alone.
 - 🤖 **Built for AI agents (MCP)** — a zero-dependency MCP server lets Claude Code / Cursor etc.
   call tools like `browser_snapshot` / `browser_click` / `browser_type` directly and operate the
   web as you. See [mcp/README.md](mcp/README.md).
+- 🎯 **Locators + auto-waiting (Playwright-style)** — `getByRole/getByText/getByLabel/getByTestId`
+  or `locator({...})`; actions auto-wait for the element to appear → be visible → be enabled (no
+  manual `sleep`), and pierce open Shadow DOM.
 - 🧭 **Structured ref snapshot** — `snapshot_refs` tags every interactive element with a stable
   `[eN]` id; click/type by id instead of brittle CSS selectors. LLM-friendly.
 - 🙋 **Human handoff + notifications** — on login / captcha, scripts/agents can `waitForHuman()`

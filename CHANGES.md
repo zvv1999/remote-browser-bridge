@@ -9,6 +9,7 @@
 - **Shadow DOM 穿透**：定位器与 `snapshot_refs` 现在都会下钻**开放** shadow root（很多 Web Component 之前定位不到）。
 - 底层新增 `locator_act` 动作（扩展内 `locatorAct` 引擎）。已对真实 DOM 端到端验证：自动等待迟到元素、按 role/text/testid/label 定位、fill/check 幂等、shadow 穿透、隐藏元素正确拒绝并超时报因。
 - 注：动作在**后台标签**里的自动等待粒度受 Chrome 定时器节流影响约 ~1s（前台 ~100ms），功能正确、只是更粗。可信输入事件/全量网络 mock/文件上传等仍需 `chrome.debugger`，本版未引入（按需再说）。
+- **版本号统一**：自本版起，Chrome 扩展版本（manifest/中继/popup）与仓库版本 `package.json` **保持一致**（本版本改动了 `background.js`，扩展一并升到 1.9.0），不再分两条线，避免版本漂移。
 
 ## v1.8.0 — 人工接管 + 钉钉通知
 

@@ -9,12 +9,20 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-// 鉴权 token 优先级：显式 opts.token > 环境变量 BRIDGE_TOKEN > 同目录 .bridge-token 文件
+// 鉴权 token 优先级：显式 opts.token > 环境变量 BRIDGE_TOKEN > 若干候选 .bridge-token 路径
+// （兼容 server 从仓库根 或 从 server/ 目录启动，runner 无论在哪跑都能找到）
 function loadToken(explicit) {
   if (explicit) return explicit;
   if (process.env.BRIDGE_TOKEN) return process.env.BRIDGE_TOKEN;
-  try { return fs.readFileSync(path.join(process.cwd(), '.bridge-token'), 'utf8').trim(); }
-  catch (e) { return ''; }
+  const candidates = [
+    path.join(process.cwd(), '.bridge-token'),      // 当前工作目录
+    path.join(__dirname, '.bridge-token'),          // server/（server 从此目录启动时）
+    path.join(__dirname, '..', '.bridge-token'),    // 仓库根（server 从仓库根启动时）
+  ];
+  for (const p of candidates) {
+    try { const t = fs.readFileSync(p, 'utf8').trim(); if (t) return t; } catch (e) {}
+  }
+  return '';
 }
 
 // 把 trace 数组渲染成自包含的 HTML 时间线

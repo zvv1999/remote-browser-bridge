@@ -13,6 +13,8 @@
 
 > 💡 **一句话看懂**：算力在云端、浏览器在本地。它把云端的代码 / AI Agent 引到你**本地那个已经登录好的真实浏览器**上——用**你的会话、你的 IP、你的指纹**去操作网页，而不是在云端另开一个一无所有的浏览器。
 
+> 🚀 **想直接跑起来？看 [QUICKSTART.md](QUICKSTART.md)** —— 拉下项目照着走即可部署（含 token 规则、服务运行、MCP 接入）。
+
 ---
 
 ## 功能亮点
@@ -100,15 +102,16 @@
 1. 打开 `chrome://extensions`，开启右上角**开发者模式**
 2. 点**加载已解压的扩展程序**，选择本仓库的 **`extension/`** 目录
 
-### 2. 启动 bridge 服务（在 CodeNext 容器 / 本机）
+### 2. 启动 bridge 服务（在**仓库根目录**）
 
 ```bash
-cd server
-node server.js            # 默认端口 3006
+npm start                 # = node server/server.js，默认端口 3006
 
 # 后台运行：
-# nohup node server.js > /tmp/bridge.log 2>&1 &
+# nohup npm start > /tmp/bridge.log 2>&1 &
 ```
+
+> 在仓库根目录启动，token（`.bridge-token`）会落在根目录，runner / MCP 都能自动读到。详见 [QUICKSTART.md](QUICKSTART.md) 第 4 节。
 
 可用环境变量：
 

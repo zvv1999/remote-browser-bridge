@@ -14,6 +14,9 @@ is left alone.
 > the web with **your session, your IP, your fingerprint**, instead of spinning up a fresh,
 > empty browser in the cloud.
 
+> 🚀 **Want to just run it? See [QUICKSTART.md](QUICKSTART.md)** — clone and follow along to
+> deploy (covers token rules, running the service, and MCP setup).
+
 ---
 
 ## Highlights
@@ -152,15 +155,17 @@ every `/api/*` (embedded in the console page, carried automatically).
 1. Open `chrome://extensions`, enable **Developer mode** (top-right).
 2. Click **Load unpacked** and select the repo’s **`extension/`** folder.
 
-### 2. Start the bridge server (in the CodeNext container / locally)
+### 2. Start the bridge server (from the **repo root**)
 
 ```bash
-cd server
-node server.js            # default port 3006
+npm start                 # = node server/server.js, default port 3006
 
 # background:
-# nohup node server.js > /tmp/bridge.log 2>&1 &
+# nohup npm start > /tmp/bridge.log 2>&1 &
 ```
+
+> Start from the repo root so the token (`.bridge-token`) lands there and runner / MCP pick it up
+> automatically. See [QUICKSTART.md](QUICKSTART.md) §4.
 
 Environment variables:
 

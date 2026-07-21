@@ -1,5 +1,12 @@
 # 变更记录
 
+## v1.11.0 — 对话框自动处理 + 轻量 trace
+
+- **JS 对话框自动处理**：`bridge.handleDialogs({accept?,promptText?})` 提前在页面主世界 monkeypatch `alert/confirm/prompt`，之后页面弹窗自动响应（默认接受），**不再卡死自动化**；`bridge.getDialogs()` 查看出现过哪些对话框。（原生 `beforeunload` 仅尽力压制属性式 handler。）
+- **轻量 trace（调试时间线）**：`bridge.startTrace({screenshots?})` → 跑流程 → `bridge.stopTrace()` / `bridge.saveTrace('trace.html')`。记录每步的动作/参数/耗时/成败与错误，`screenshots:true` 时在"视觉类"动作后附截图，导出成一份自包含的暗色 HTML 时间线，排查 flaky/失败在哪一步很直观。tracer 自身触发的截图不计入（防递归）。
+- 底层：扩展新增 `install_dialog_handler/get_dialogs` 动作；runner 的 `exec()` 加了 trace 钩子（同时记录失败步骤），新增 `renderTraceHtml`。
+- 已**无头验证**：对话框 accept/reject 两种模式的返回值与记录、trace 记录失败步骤并生成合法 HTML、`screenshots:true` 时截图入帧且不递归。
+
 ## v1.10.0 — 网络控制 + Web-first 断言（继续补 Playwright）
 
 - **等待网络空闲**：`bridge.waitForNetworkIdle({idleMs?,timeout?})` —— 连续 idleMs 内在途请求为 0 才返回，SPA 跳转/异步加载后很好用（`fetch`/`XHR` 都计数）。

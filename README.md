@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-![version](https://img.shields.io/badge/version-1.10.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.11.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 让 **CodeNext**（云端 IDE / 容器）或 **AI Agent** 通过一个 Chrome 扩展**远程操控你本地的浏览器**。
 纯 HTTP 长轮询，无需 WebSocket；扩展**只操控名为 `Remote Control` 的标签组**，其它标签页完全不受影响。
@@ -27,6 +27,7 @@
 - 🧰 **40+ 指令** — 导航、点击/输入/按键、读取 DOM/文本/HTML、等待元素/文字、滚动、关闭弹窗、cookie、`iframe` 内操作、执行 JS。
 - 🌐 **网络控制** — 抓包 `fetch`/`XHR`、`waitForNetworkIdle()` 等请求空闲、`route()` mock/abort 接口响应、用页面凭证发请求（`networkFetch`）。
 - ✅ **Web-first 断言** — `expect(locator).toBeVisible()/toHaveText()/toBeChecked()…` 自动重试到超时。
+- 🧩 **对话框自动处理 + 调试 trace** — `handleDialogs()` 让页面 `alert/confirm/prompt` 自动响应不卡死；`startTrace()/saveTrace()` 导出步骤时间线（动作/耗时/成败/可选截图）。
 - 🎨 **Canvas 文本读取** — 拦截 canvas 绘制文本并按坐标重排成可读文本（适用于用 canvas 渲染正文的页面）。
 - 📊 **控制台看板** — 标签页 / 截图 / 网络 / Cookie 四个面板，快捷按钮 + 命令工具栏。
 - ⚙️ **零依赖，两种写法** — 纯 Node（`http`/`crypto`），支持灵活的 JS 脚本与简单的 JSON 声明式步骤。

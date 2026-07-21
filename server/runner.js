@@ -17,6 +17,46 @@ function loadToken(explicit) {
   catch (e) { return ''; }
 }
 
+// 把 trace 数组渲染成自包含的 HTML 时间线
+function renderTraceHtml(trace) {
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const rows = (trace || []).map((e) => {
+    const cls = e.ok ? 'ok' : 'err';
+    const shot = e.shot ? `<div class="shot"><img src="${e.shot}"></div>` : '';
+    return `<div class="step ${cls}">
+      <div class="head"><span class="seq">#${e.seq}</span><span class="act">${esc(e.action)}</span><span class="dur">${e.durationMs}ms</span><span class="badge ${cls}">${e.ok ? 'ok' : 'error'}</span></div>
+      <div class="params">${esc(e.params)}</div>
+      ${e.error ? `<div class="err-msg">${esc(e.error)}</div>` : ''}
+      ${shot}
+    </div>`;
+  }).join('');
+  const total = (trace || []).length;
+  const failed = (trace || []).filter((e) => !e.ok).length;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Bridge Trace</title>
+<style>
+  body{font-family:-apple-system,'Segoe UI',sans-serif;background:#141a2e;color:#e0e0e0;margin:0;padding:20px}
+  h1{font-size:18px;color:#7c8cf8;margin:0 0 4px}
+  .sub{color:#8a93b8;font-size:12px;margin-bottom:16px}
+  .step{background:#1b2647;border:1px solid #2a3566;border-left:4px solid #4caf50;border-radius:8px;padding:10px 12px;margin-bottom:8px}
+  .step.err{border-left-color:#e57373}
+  .head{display:flex;align-items:center;gap:10px;font-size:13px}
+  .seq{color:#8a93b8;font-family:monospace}
+  .act{font-weight:600;color:#cdd3f0}
+  .dur{color:#8a93b8;font-size:11px;margin-left:auto}
+  .badge{font-size:10px;padding:1px 8px;border-radius:10px}
+  .badge.ok{background:rgba(76,175,80,.2);color:#81c784}
+  .badge.err{background:rgba(244,67,54,.2);color:#e57373}
+  .params{color:#9aa3c8;font-family:monospace;font-size:11px;margin-top:6px;word-break:break-all}
+  .err-msg{color:#e57373;font-size:12px;margin-top:6px}
+  .shot{margin-top:8px}
+  .shot img{max-width:360px;border:1px solid #34407a;border-radius:6px}
+</style></head><body>
+<h1>Remote Browser Bridge — Trace</h1>
+<div class="sub">${total} 步 · ${failed} 失败</div>
+${rows || '<div class="sub">（无记录）</div>'}
+</body></html>`;
+}
+
 class Bridge {
   constructor(opts = {}) {
     this.host = opts.host || '127.0.0.1';
@@ -36,8 +76,17 @@ class Bridge {
 
     if (this.verbose) process.stderr.write(`  ▶ ${action} ${JSON.stringify(params).substring(0, 60)}\n`);
 
-    const result = await this._httpPost('/api/command', body);
-    this.results.push({ action, params, result, time: Date.now() });
+    const start = Date.now();
+    let result, err;
+    try {
+      result = await this._httpPost('/api/command', body);
+      this.results.push({ action, params, result, time: Date.now() });
+    } catch (e) { err = e; }
+    // 追踪（tracing 时记录每步；screenshot 与 tracer 自身触发的调用不记，避免递归）
+    if (this._tracing && !this._traceBusy && action !== 'screenshot') {
+      await this._traceRecord(action, params, result, err, Date.now() - start);
+    }
+    if (err) throw err;
     return result;
   }
 
@@ -262,6 +311,43 @@ class Bridge {
       toBeChecked: (o) => run('expectChecked', { checked: true }, o),
       notToBeChecked: (o) => run('expectChecked', { checked: false }, o),
     };
+  }
+
+  // ── 对话框自动处理 ──
+  // 提前安装：之后页面的 alert/confirm/prompt 自动响应，不再卡住自动化
+  async handleDialogs(opts = {}) { return this.exec('install_dialog_handler', { opts }); }
+  async getDialogs() { return this.exec('get_dialogs'); }
+
+  // ── 轻量 trace（记录每步 + 可选截图 → 存成 HTML 时间线）──
+  startTrace(opts = {}) {
+    this._trace = [];
+    this._tracing = true;
+    this._traceBusy = false;
+    this._traceOpts = { screenshots: !!opts.screenshots };
+    return this;
+  }
+  stopTrace() { this._tracing = false; return this._trace || []; }
+  async _traceRecord(action, params, result, err, durationMs) {
+    const entry = {
+      seq: (this._trace.length + 1), action,
+      params: JSON.stringify(params || {}).slice(0, 300),
+      ok: !err && !(result && result.error),
+      error: err ? err.message : (result && result.error) || null,
+      durationMs, at: Date.now(),
+    };
+    const visual = ['navigate', 'new_tab', 'reload', 'go_back', 'go_forward', 'click', 'type', 'click_text',
+      'press_key', 'click_ref', 'type_ref', 'locator_act', 'scroll', 'scroll_to_bottom', 'dismiss_overlays'].includes(action);
+    if (this._traceOpts.screenshots && visual) {
+      this._traceBusy = true;
+      try { const s = await this.exec('screenshot'); if (s && s.dataUrl) entry.shot = s.dataUrl; } catch (e) {}
+      this._traceBusy = false;
+    }
+    this._trace.push(entry);
+  }
+  async saveTrace(filePath) {
+    const trace = this._trace || [];
+    fs.writeFileSync(filePath, renderTraceHtml(trace), 'utf8');
+    return { path: filePath, steps: trace.length };
   }
 
   async screenshot() {

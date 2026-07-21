@@ -50,10 +50,14 @@ exports.main = async (bridge) => {
 | iframe | `listFrames()`（配合各方法的 `frameId` 参数在指定 iframe 内操作） |
 | 执行 | `evaluate(code)` |
 | 人机协作 | `waitForHuman(msg,opts?)` · `pauseIfRisky(opts?)` · `notify(text)`（钉钉） |
+| 对话框 | `handleDialogs({accept?,promptText?})` · `getDialogs()` |
+| 调试追踪 | `startTrace({screenshots?})` · `stopTrace()` · `saveTrace(path)`（存 HTML 时间线） |
 | Canvas | `installResumeHook()` · `readResumeCanvas()` · `readResumeCanvasFull()` |
 
 也可以直接用底层调用：`bridge.exec('action_name', { ...params }, timeoutMs)`。
 
+> **对话框 + 调试追踪**：`await bridge.handleDialogs()` 提前装好，之后页面的 `alert/confirm/prompt` 自动响应、不再卡住（`getDialogs()` 看出现过哪些）。`bridge.startTrace({screenshots:true})` → 跑流程 → `await bridge.saveTrace('trace.html')` 生成一份**步骤时间线**（每步动作/耗时/成败，可含截图），排查 flaky 很好用。
+>
 > **网络控制 + 断言（补 Playwright）**：`await bridge.waitForNetworkIdle()` 等 SPA 请求都结束；`await bridge.route('/api/list', { body: {items:[]} })` 直接 mock 掉某个接口的响应（或 `bridge.route('/track', 'abort')` 拦掉某请求）；`await bridge.expect(bridge.getByText('成功')).toBeVisible()` 自动重试断言。路由作用于页面的 `fetch`。
 >
 > **定位器 + 自动等待（写脚本更稳）**：`getByRole/getByText/getByLabel/getByPlaceholder/getByTestId` 或 `locator({...})` 返回一个可链式操作的句柄，动作前**自动等待**元素出现→可见→可用（免去手动 `sleep`/`waitFor`），并**穿透开放 Shadow DOM**。例：`await bridge.getByRole('button','登录').click()`、`await bridge.getByLabel('用户名').fill('admin')`、`await bridge.locator({text:'结果'}).waitFor()`。`check` 是幂等的（不会把已勾选的切掉）。

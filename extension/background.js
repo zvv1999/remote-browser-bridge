@@ -367,6 +367,11 @@ async function executeAction(action, params) {
       await executeInTab(tab.id, networkIntercept, [], frameId, 'MAIN'); // 确保在途计数生效
       return await executeInTab(tab.id, waitNetworkIdle, [params.idleMs || 500, params.timeout || 15000], frameId, 'MAIN');
     }
+    // 自动处理 JS 对话框
+    case 'install_dialog_handler':
+      return await executeInTab(tab.id, installDialogHandler, [params.opts || {}], frameId, 'MAIN');
+    case 'get_dialogs':
+      return await executeInTab(tab.id, getDialogs, [], frameId, 'MAIN');
 
     // ── DOM 操作（支持可选 frameId）──
     case 'click':
@@ -1316,6 +1321,29 @@ async function waitNetworkIdle(idleMs, timeout) {
     await new Promise(r => setTimeout(r, 100));
   }
   return { idle: false, inflight: window.__bridgeNetInflight || 0 };
+}
+
+// 自动处理 JS 对话框（alert/confirm/prompt），避免页面弹窗卡住自动化。
+// opts: { accept=true, promptText='' }。会记录出现过的对话框到 window.__bridgeDialogs。
+function installDialogHandler(opts) {
+  opts = opts || {};
+  const accept = opts.accept !== false;
+  const promptText = opts.promptText != null ? opts.promptText : '';
+  if (!window.__bridgeDialogs) window.__bridgeDialogs = [];
+  window.__bridgeDialogAccept = accept;
+  window.__bridgeDialogPromptText = promptText;
+  if (window.__bridgeDialogHandlerInstalled) return { ok: true, already: true, accept, dialogs: window.__bridgeDialogs.length };
+  window.__bridgeDialogHandlerInstalled = true;
+  const rec = (type, message) => { try { window.__bridgeDialogs.push({ type, message: String(message == null ? '' : message).slice(0, 500), at: Date.now() }); } catch (e) {} };
+  window.alert = function (m) { rec('alert', m); };
+  window.confirm = function (m) { rec('confirm', m); return !!window.__bridgeDialogAccept; };
+  window.prompt = function (m, d) { rec('prompt', m); return window.__bridgeDialogAccept ? (window.__bridgeDialogPromptText || (d || '')) : null; };
+  try { window.onbeforeunload = null; } catch (e) {} // 尽力压制 beforeunload 原生弹窗（仅属性式 handler）
+  return { ok: true, installed: true, accept };
+}
+function getDialogs() {
+  const d = window.__bridgeDialogs || [];
+  return { dialogs: d, count: d.length };
 }
 
 // 返回已捕获的请求列表

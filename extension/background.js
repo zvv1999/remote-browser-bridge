@@ -1623,146 +1623,208 @@ async function readCanvasFull(selector, containerSel, maxScrolls, delay, maxDim)
 // Canvas 文本 Hook — 拦截 canvas 渲染的文字（适用于用 canvas 绘制正文的页面）
 // 通用能力：patch fillText/strokeText 收集绘制文本，再按坐标重排成可读文本
 // ══════════════════════════════════════
+// 提前把钩子装进"当前窗口 + 所有同源 iframe"，并用 MutationObserver 盯新出现的 iframe（如简历 c-resume）自动补装；
+// 直接 patch 子窗口的 CanvasRenderingContext2D.prototype（不走 eval → 不受页面 CSP 限制）。
+// 正确用法：**打开简历弹窗之前**先调它，观察器会赶在 canvas 绘制前把钩子装进新 iframe。
 function installResumeHook() {
-  const frameUrl = window.location.href;
-  if (window.__bossResumeCanvasHookInstalled)
-    return { already: true, installed: false, frameUrl };
-  window.__bossResumeCanvasHookInstalled = true;
-  window.__bossResumeCanvasTexts = [];
-
-  const origFill = CanvasRenderingContext2D.prototype.fillText;
-  const origStroke = CanvasRenderingContext2D.prototype.strokeText;
-
-  function record(kind, ctx, args) {
+  const installHookInWindow = (win) => {
     try {
-      const canvas = ctx && ctx.canvas;
-      window.__bossResumeCanvasTexts.push({
-        kind,
-        text: String(args[0] || ''),
-        x: Number(args[1] || 0),
-        y: Number(args[2] || 0),
-        font: String(ctx.font || ''),
-        fillStyle: String(ctx.fillStyle || ''),
-        strokeStyle: String(ctx.strokeStyle || ''),
-        canvasId: (canvas && canvas.id) || '',
-        canvasWidth: (canvas && canvas.width) || 0,
-        canvasHeight: (canvas && canvas.height) || 0
-      });
+      if (!win) return false;
+      if (win.__bossResumeCanvasHookInstalled) return true;
+      const CRC = win.CanvasRenderingContext2D;
+      if (!CRC || !CRC.prototype) return false;
+      win.__bossResumeCanvasHookInstalled = true;
+      win.__bossResumeCanvasTexts = win.__bossResumeCanvasTexts || [];
+      const origFill = CRC.prototype.fillText;
+      const origStroke = CRC.prototype.strokeText;
+      const record = (kind, ctx, args) => {
+        try {
+          const canvas = ctx && ctx.canvas;
+          win.__bossResumeCanvasTexts.push({
+            kind, text: String(args[0] == null ? '' : args[0]),
+            x: Number(args[1] || 0), y: Number(args[2] || 0),
+            font: String(ctx.font || ''), fillStyle: String(ctx.fillStyle || ''), strokeStyle: String(ctx.strokeStyle || ''),
+            canvasId: (canvas && canvas.id) || '', canvasWidth: (canvas && canvas.width) || 0, canvasHeight: (canvas && canvas.height) || 0,
+            scrollTop: Number(win.__bossResumeScrollTop || 0), at: Date.now(),
+          });
+        } catch (e) {}
+      };
+      CRC.prototype.fillText = function (...a) { record('fillText', this, a); return origFill.apply(this, a); };
+      CRC.prototype.strokeText = function (...a) { record('strokeText', this, a); return origStroke.apply(this, a); };
+      // 探针：画一句测试文字，能记录到即说明钩子在工作
+      win.__bossResumeCanvasHookProbe = function () {
+        try { const c = win.document.createElement('canvas'); c.width = 1; c.height = 1; c.getContext('2d').fillText('Boss-TraceID test', 0, 0); return true; } catch (e) { return false; }
+      };
+      return true;
+    } catch (e) { return false; }
+  };
+  const installTree = (win) => {
+    let count = installHookInWindow(win) ? 1 : 0;
+    try {
+      const doc = win.document;
+      Array.from(doc.querySelectorAll('iframe')).forEach((f) => { try { if (f.contentWindow) count += installTree(f.contentWindow); } catch (e) {} });
+      if (!win.__bossResumeIframeHookObserverInstalled) {
+        win.__bossResumeIframeHookObserverInstalled = true;
+        const obs = new win.MutationObserver(() => {
+          try { Array.from(doc.querySelectorAll('iframe')).forEach((f) => { try { if (f.contentWindow) installTree(f.contentWindow); } catch (e) {} }); } catch (e) {}
+        });
+        try { obs.observe(doc.documentElement || doc, { childList: true, subtree: true }); } catch (e) {}
+      }
     } catch (e) {}
-  }
-
-  CanvasRenderingContext2D.prototype.fillText = function (...args) {
-    record('fillText', this, args);
-    return origFill.apply(this, args);
+    return count;
   };
-  CanvasRenderingContext2D.prototype.strokeText = function (...args) {
-    record('strokeText', this, args);
-    return origStroke.apply(this, args);
-  };
-
-  return { installed: true, already: false, frameUrl };
+  const frames = installTree(window);
+  let probeOk = false;
+  try { probeOk = !!(window.__bossResumeCanvasHookProbe && window.__bossResumeCanvasHookProbe()); } catch (e) {}
+  return { installed: true, frames, probeOk, frameUrl: location.href };
 }
 
-// 同步读取：仅收集当前已拦截的 Canvas 文字 + DOM 文字
+// 同步读取：收集所有同源窗口已拦截的 Canvas 文字，重建文本（不滚动）
 function readResumeCanvasSync() {
-  const drawCalls = [...(window.__bossResumeCanvasTexts || [])];
+  const reconstruct = (drawCalls, yTol) => {
+    yTol = yTol || 3;
+    const resume = drawCalls.filter((c) => c && String(c.canvasId || '') === 'resume');
+    const src = resume.length ? resume : drawCalls;
+    const numeric = [];
+    for (const c of src) {
+      if (!c) continue;
+      const text = String(c.text || '');
+      if (!text.trim()) continue;
+      if (text.indexOf('Boss-TraceID test') !== -1 || text.indexOf('bzl|abcdefghijklmnopqrstuvwxyz') === 0) continue;
+      numeric.push({ text, x: Math.round((Number(c.x) || 0) * 10) / 10, y: Math.round((Number(c.y) || 0) * 10) / 10, scrollTop: Math.round((Number(c.scrollTop) || 0) * 10) / 10, canvasHeight: Math.round((Number(c.canvasHeight) || 0) * 10) / 10, font: String(c.font || '') });
+    }
+    const usesAbs = numeric.some((it) => it.canvasHeight > 0 && it.y > it.canvasHeight + 20);
+    const seen = new Set(); const items = [];
+    for (const it of numeric) {
+      const absY = usesAbs ? it.y : Math.round((it.y + it.scrollTop) * 10) / 10;
+      const key = it.text + '|' + it.x + '|' + absY + '|' + it.font;
+      if (seen.has(key)) continue; seen.add(key);
+      items.push({ text: it.text, x: it.x, y: absY });
+    }
+    items.sort((a, b) => a.y - b.y || a.x - b.x);
+    const groups = [];
+    for (const it of items) {
+      let placed = false;
+      for (const g of groups) { const gy = g.reduce((s, v) => s + v.y, 0) / g.length; if (Math.abs(gy - it.y) <= yTol) { g.push(it); placed = true; break; } }
+      if (!placed) groups.push([it]);
+    }
+    const lines = [];
+    for (const g of groups) { g.sort((a, b) => a.x - b.x); const line = g.map((v) => v.text).join('').trim(); if (line) { const ay = g.reduce((s, v) => s + v.y, 0) / g.length; lines.push([ay, line]); } }
+    lines.sort((a, b) => a[0] - b[0]);
+    return lines.map((l) => l[1]).join('\n');
+  };
+  const wins = [window];
+  document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) wins.push(f.contentWindow); } catch (e) {} });
+  const allCalls = [];
+  for (const w of wins) { try { const a = w.__bossResumeCanvasTexts; if (a && a.length) allCalls.push(...a); } catch (e) {} }
   const dialog = document.querySelector('.dialog-wrap.active, .boss-dialog__wrapper.dialog-lib-resume, .dialog-wrap, .boss-dialog__wrapper');
   const domText = (dialog ? (dialog.innerText || dialog.textContent || '') : (document.body && document.body.innerText || '')).replace(/\s+/g, ' ').trim().substring(0, 8000);
-  const canvasCount = (dialog || document).querySelectorAll('canvas').length;
-
-  // 检查是否有 resume iframe
-  const frames = Array.from((dialog || document).querySelectorAll('iframe')).map(f => ({
+  const frames = Array.from(document.querySelectorAll('iframe')).map((f) => ({
     src: f.getAttribute('src') || f.src || '',
-    hasDoc: !!f.contentDocument,
-    isResumeIframe: (f.src || '').includes('/web/frame/c-resume')
+    hasDoc: (() => { try { return !!f.contentDocument; } catch (e) { return false; } })(),
+    isResumeIframe: (f.src || '').includes('/web/frame/c-resume'),
   }));
-
   return {
-    drawCallsCount: drawCalls.length,
-    canvasCount,
-    domText,
-    frames,
-    hasResumeIframe: frames.some(f => f.isResumeIframe)
+    drawCallsCount: allCalls.length,
+    reconstructedText: reconstruct(allCalls, 3).substring(0, 20000),
+    canvasCount: (dialog || document).querySelectorAll('canvas').length,
+    domText, frames, hasResumeIframe: frames.some((f) => f.isResumeIframe),
   };
 }
 
-// 异步完整读取：逐屏滚动简历弹窗，收集所有 Canvas 文字并重建文本
+// 异步完整读取：定位简历弹窗 + c-resume iframe，逐屏滚动触发重绘，从简历窗口收集绘制文字并重建
 async function readResumeCanvasFull(maxScrolls) {
   const limit = maxScrolls || 15;
+  const reconstruct = (drawCalls, yTol) => {
+    yTol = yTol || 3;
+    const resume = drawCalls.filter((c) => c && String(c.canvasId || '') === 'resume');
+    const src = resume.length ? resume : drawCalls;
+    const numeric = [];
+    for (const c of src) {
+      if (!c) continue;
+      const text = String(c.text || '');
+      if (!text.trim()) continue;
+      if (text.indexOf('Boss-TraceID test') !== -1 || text.indexOf('bzl|abcdefghijklmnopqrstuvwxyz') === 0) continue;
+      numeric.push({ text, x: Math.round((Number(c.x) || 0) * 10) / 10, y: Math.round((Number(c.y) || 0) * 10) / 10, scrollTop: Math.round((Number(c.scrollTop) || 0) * 10) / 10, canvasHeight: Math.round((Number(c.canvasHeight) || 0) * 10) / 10, font: String(c.font || '') });
+    }
+    const usesAbs = numeric.some((it) => it.canvasHeight > 0 && it.y > it.canvasHeight + 20);
+    const seen = new Set(); const items = [];
+    for (const it of numeric) {
+      const absY = usesAbs ? it.y : Math.round((it.y + it.scrollTop) * 10) / 10;
+      const key = it.text + '|' + it.x + '|' + absY + '|' + it.font;
+      if (seen.has(key)) continue; seen.add(key);
+      items.push({ text: it.text, x: it.x, y: absY });
+    }
+    items.sort((a, b) => a.y - b.y || a.x - b.x);
+    const groups = [];
+    for (const it of items) {
+      let placed = false;
+      for (const g of groups) { const gy = g.reduce((s, v) => s + v.y, 0) / g.length; if (Math.abs(gy - it.y) <= yTol) { g.push(it); placed = true; break; } }
+      if (!placed) groups.push([it]);
+    }
+    const lines = [];
+    for (const g of groups) { g.sort((a, b) => a.x - b.x); const line = g.map((v) => v.text).join('').trim(); if (line) { const ay = g.reduce((s, v) => s + v.y, 0) / g.length; lines.push([ay, line]); } }
+    lines.sort((a, b) => a[0] - b[0]);
+    return lines.map((l) => l[1]).join('\n');
+  };
+  const isVisible = (n) => { try { const s = n.ownerDocument.defaultView.getComputedStyle(n); const r = n.getBoundingClientRect(); return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0; } catch (e) { return false; } };
+  const txt = (n) => ((n && (n.innerText || n.textContent)) || '').replace(/\s+/g, ' ').trim();
 
-  // 查找简历弹窗
-  const selectors = [
-    '.dialog-wrap.active', '.boss-dialog__wrapper.dialog-lib-resume',
-    '.dialog-wrap', '.boss-dialog__wrapper'
-  ];
-  let dialog = null;
-  for (const sel of selectors) {
-    dialog = document.querySelector(sel);
-    if (dialog && dialog.offsetParent !== null) break;
-  }
-
-  if (!dialog) {
-    // 检查是否在 iframe 中（Boss 的简历 iframe）
-    const frames = Array.from(document.querySelectorAll('iframe'))
-      .filter(f => (f.src || '').includes('/web/frame/c-resume'));
-    return {
-      ok: false,
-      reason: 'resume likely in iframe',
-      resumeFrames: frames.map(f => ({
-        src: f.src || f.getAttribute('src') || '',
-        hasDoc: !!f.contentDocument
-      }))
-    };
-  }
-
-  // 找可滚动容器
-  const wrap = dialog.querySelector('.resume-detail-wrap, .lib-standard-resume') || dialog;
-  const canvasCount = dialog.querySelectorAll('canvas').length;
-  const domText = (dialog.innerText || '').replace(/\s+/g, ' ').trim();
-  const clientH = wrap.clientHeight || 600;
-  const totalH = wrap.scrollHeight || 2000;
-  const steps = Math.min(limit, Math.ceil(totalH / Math.max(clientH, 1)));
-
-  // 滚动收集
-  const allCalls = [];
-  const seen = new Set();
-  for (let i = 0; i < steps; i++) {
-    wrap.scrollTop = i * clientH;
-    await new Promise(r => setTimeout(r, 350));
-    const newCalls = window.__bossResumeCanvasTexts || [];
-    for (const c of newCalls) {
-      const key = c.text + '|' + Math.round(c.y) + '|' + Math.round(c.x);
-      if (!seen.has(key)) {
-        seen.add(key);
-        allCalls.push(c);
+  // 在主文档 + 同源 iframe 里找简历弹窗
+  const docs = [document];
+  document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {} });
+  let dialog = null, detailWrap = null, resumeWin = null;
+  for (const doc of docs) {
+    let dlgs = Array.from(doc.querySelectorAll('.dialog-wrap.active, .boss-dialog__wrapper.dialog-lib-resume')).filter(isVisible);
+    if (!dlgs.length) dlgs = Array.from(doc.querySelectorAll('.dialog-wrap, .boss-dialog__wrapper')).filter(isVisible);
+    for (const d of dlgs) {
+      const dw = d.querySelector('.resume-detail-wrap, .lib-standard-resume');
+      if (dw || /经历概览|工作经历|教育经历|期望|优势/.test(txt(d))) {
+        dialog = d; detailWrap = dw || d;
+        const rf = d.querySelector('iframe[src*="/web/frame/c-resume"]');
+        if (rf) { try { resumeWin = rf.contentWindow; } catch (e) {} }
+        break;
       }
     }
+    if (detailWrap) break;
+  }
+  if (!detailWrap) {
+    const rframes = [];
+    document.querySelectorAll('iframe').forEach((f) => { if ((f.src || '').includes('/web/frame/c-resume')) rframes.push({ src: f.src || f.getAttribute('src') || '', hasDoc: (() => { try { return !!f.contentDocument; } catch (e) { return false; } })() }); });
+    return { ok: false, reason: 'resume-detail-wrap not found', resumeFrames: rframes };
   }
 
-  // 按 Y 坐标分行重建文本
-  const lineMap = {};
-  for (const c of allCalls) {
-    const lineKey = Math.round(c.y / 3) * 3; // 用 3px 容差分组
-    if (!lineMap[lineKey]) lineMap[lineKey] = [];
-    lineMap[lineKey].push(c);
+  const clientH = detailWrap.clientHeight || 600;
+  const totalH = Math.max(detailWrap.scrollHeight || 2000, clientH);
+  const steps = Math.min(limit, Math.max(1, Math.ceil(totalH / Math.max(clientH, 1))));
+  const allCalls = [];
+  const collect = () => {
+    const wins = [];
+    if (resumeWin) wins.push(resumeWin);
+    wins.push(window);
+    document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) wins.push(f.contentWindow); } catch (e) {} });
+    for (const w of wins) { try { const a = w.__bossResumeCanvasTexts; if (a && a.length) allCalls.push(...a.splice(0)); } catch (e) {} }
+  };
+  collect(); // 先收一次初始绘制（静态整张 canvas 的情况）
+  for (let i = 0; i < steps; i++) {
+    const top = i * clientH;
+    if (resumeWin) { try { resumeWin.__bossResumeScrollTop = top; } catch (e) {} }
+    try { window.__bossResumeScrollTop = top; } catch (e) {}
+    try { detailWrap.scrollTop = top; } catch (e) {}
+    try { detailWrap.dispatchEvent(new Event('scroll', { bubbles: true })); } catch (e) {}
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 300))));
+    collect();
   }
-  const sorted = Object.entries(lineMap)
-    .sort((a, b) => Number(a[0]) - Number(b[0]));
-  const reconstructed = sorted
-    .map(([, calls]) => {
-      calls.sort((a, b) => a.x - b.x);
-      return calls.map(c => c.text).join('');
-    })
-    .join('\n');
-
+  try { detailWrap.scrollTop = 0; } catch (e) {}
   return {
     ok: true,
-    canvasCount,
+    canvasCount: (dialog || document).querySelectorAll('canvas').length,
     drawCalls: allCalls.length,
     steps,
     scrollHeight: totalH,
-    domText: domText.substring(0, 3000),
-    reconstructedText: reconstructed.substring(0, 20000)
+    hasResumeFrame: !!resumeWin,
+    domText: txt(dialog).substring(0, 3000),
+    reconstructedText: reconstruct(allCalls, 3).substring(0, 20000),
   };
 }
 

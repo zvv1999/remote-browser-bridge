@@ -1,5 +1,21 @@
 # 变更记录
 
+## v1.15.0 — Canvas 简历钩子重写：提前装 + iframe 观察器 + 探针 + 强重排
+
+把结构化文本读取（fillText 钩子法）做到跟成熟 CDP 方案一样稳，全在扩展内、不引 CDP：
+
+- **`install_resume_hook` 重写**：不再"用的时候才装、只装当前 window"，而是：
+  - **直接 patch 子窗口的 `CanvasRenderingContext2D.prototype`**（注入函数直接执行，**不走 eval → 不受页面 CSP 限制**；Boss 禁 eval 也没事）；
+  - **递归装进当前 window + 所有同源 iframe**；
+  - **MutationObserver** 盯着新出现的 iframe（如简历 `c-resume`），一出现就自动补装钩子——**赶在 canvas 绘制前**；
+  - **探针** `__bossResumeCanvasHookProbe`：画一句测试文字确认钩子在工作，返回 `probeOk`。
+  - 记录字段更全：`canvasId / canvasHeight / scrollTop`。
+- **`read_resume_canvas_full` 重写**：定位简历弹窗 + `c-resume` iframe 的 window，逐屏滚动（设 `__bossResumeScrollTop` + 派发 scroll + `rAF`×2）触发重绘，从**简历窗口**splice 绘制文字；先收一次初始绘制（静态整张 canvas）。
+- **重排移植自成熟方案**：过滤 `canvasId=="resume"`、剔除探针/诱饵行、`absolute-Y + scrollTop` 处理、按 Y 分行、行内按 X 拼。`read_resume_canvas`（sync）也用同一重排。
+- 已**无头验证**：钩子 patch/记录/探针正确；重排能正确分行、去重、处理滚动绝对坐标、剔除探针。
+
+> **正确用法**：**先 `install_resume_hook`（打开简历弹窗之前）→ 再打开简历 → `read_resume_canvas_full`**。观察器会赶在简历 iframe 绘制前把钩子装进去，于是能拿到带坐标的结构化文字（比 OCR 准）。配合 `read_canvas_image`（图片+OCR）双保险。
+
 ## v1.14.1 — `read_canvas_full` 自动找弹窗滚动容器
 
 - `read_canvas_full` 的滚动容器探测改为**从 canvas 往上找"真正能滚的那个祖先"**（`overflow-y:auto/scroll` 且 `scrollHeight>clientHeight`）——模态弹窗（如 Boss 简历）自己有滚动区、页面背后锁死时，之前靠类名猜可能滚错对象；现在能自动命中弹窗内的滚动区。仍可用 `container` 参数手动指定。

@@ -1,5 +1,12 @@
 # 变更记录
 
+## v1.13.0 — 直接导出 canvas 图片（更稳的 canvas 内容读取）
+
+- **新增 `read_canvas_image`**（runner `readCanvasImage({selector?,frameId?,maxDim?})`、MCP `browser_read_canvas`）：直接把**已渲染**的 `<canvas>` 导出为 PNG 返回，交给视觉模型 OCR。
+  - **为什么**：`install_resume_hook`（monkeypatch `fillText`）只能抓到**安装之后**的绘制，而很多 canvas 是**加载时一次性画完、之后静态**（滚动也不重绘），再叠加 iframe 每次重开换 frameId，hook 时序几乎不可靠。而 canvas 位图挂在 DOM 元素上、**跨 world 共享**，所以 `toDataURL()` 能读到页面已经画好的像素，不依赖 hook。
+  - 支持 `frameId`（canvas 在 iframe 里时）、`maxDim`（缩放控制返回大小）；跨源污染的 canvas 会返回 `error` 而非崩溃。
+  - `install_resume_hook` / `read_resume_canvas` 仍保留（能拿到带坐标的结构化文本，但需在绘制前装好、时序敏感）；**新页面优先用 `read_canvas_image` + OCR，更稳**。
+
 ## v1.12.0 — 同源 iframe 穿透 + 录制生成脚本（codegen）
 
 清掉"扩展内还能补"的最后两个边角：

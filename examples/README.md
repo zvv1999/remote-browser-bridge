@@ -53,7 +53,7 @@ exports.main = async (bridge) => {
 | 对话框 | `handleDialogs({accept?,promptText?})` · `getDialogs()` |
 | 调试追踪 | `startTrace({screenshots?})` · `stopTrace()` · `saveTrace(path)`（存 HTML 时间线） |
 | 录制生成脚本 | `startRecording()` · `getRecording()` · `stopRecording()` · `generateScript(steps)` · `saveScript(path)` |
-| Canvas | `installResumeHook()` · `readResumeCanvas()` · `readResumeCanvasFull()` |
+| Canvas | `readCanvasImage({selector?,frameId?,maxDim?})`（导出已渲染 canvas 为 PNG → 交给视觉模型 OCR，**推荐**）· `installResumeHook()` · `readResumeCanvas()` · `readResumeCanvasFull()`（fillText 钩子法，需在绘制前装好，时序敏感） |
 
 也可以直接用底层调用：`bridge.exec('action_name', { ...params }, timeoutMs)`。
 

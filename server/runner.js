@@ -577,6 +577,15 @@ class Bridge {
     return this.exec('read_resume_canvas_full', { maxScrolls, ...(frameId ? { frameId } : {}) });
   }
 
+  // 直接把已渲染的 canvas 导出为图片（不依赖 hook 时序，适合静态/一次性绘制的 canvas → 交给视觉模型 OCR）
+  // opts: { selector?, format?='image/png', maxDim?=0, frameId? }
+  async readCanvasImage(opts = {}) {
+    return this.exec('read_canvas_image', {
+      selector: opts.selector, format: opts.format, maxDim: opts.maxDim,
+      ...(opts.frameId != null ? { frameId: opts.frameId } : {}),
+    });
+  }
+
   // ── 标签页管理 ──
   async closeTab(tabId) {
     return this.exec('close_tab', tabId ? { tabId } : {});

@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-![version](https://img.shields.io/badge/version-1.12.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.13.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 让 **CodeNext**（云端 IDE / 容器）或 **AI Agent** 通过一个 Chrome 扩展**远程操控你本地的浏览器**。
 纯 HTTP 长轮询，无需 WebSocket；扩展**只操控名为 `Remote Control` 的标签组**，其它标签页完全不受影响。
@@ -31,7 +31,7 @@
 - ✅ **Web-first 断言** — `expect(locator).toBeVisible()/toHaveText()/toBeChecked()…` 自动重试到超时。
 - 🧩 **对话框自动处理 + 调试 trace** — `handleDialogs()` 让页面 `alert/confirm/prompt` 自动响应不卡死；`startTrace()/saveTrace()` 导出步骤时间线（动作/耗时/成败/可选截图）。
 - 🔴 **录制生成脚本（codegen）+ iframe 穿透** — `startRecording()` 后手动操作，`saveScript()` 生成可运行脚本；定位器/快照自动穿透同源 iframe。
-- 🎨 **Canvas 文本读取** — 拦截 canvas 绘制文本并按坐标重排成可读文本（适用于用 canvas 渲染正文的页面）。
+- 🎨 **Canvas 内容读取** — `readCanvasImage()` 直接导出已渲染 canvas 为图片交视觉模型 OCR（推荐、稳）；或 `install_resume_hook` 拦截 `fillText` 重排结构化文本（时序敏感）。
 - 📊 **控制台看板** — 标签页 / 截图 / 网络 / Cookie 四个面板，快捷按钮 + 命令工具栏。
 - ⚙️ **零依赖，两种写法** — 纯 Node（`http`/`crypto`），支持灵活的 JS 脚本与简单的 JSON 声明式步骤。
 

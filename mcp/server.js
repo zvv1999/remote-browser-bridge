@@ -141,6 +141,32 @@ const TOOLS = [
     },
   },
   {
+    name: 'browser_read_canvas',
+    description: '把当前页面（或指定 frame）里已渲染的 <canvas> 导出为 PNG 图片返回，供你直接“看”并 OCR。' +
+      '适合用 canvas 绘制正文/简历的页面 —— 这类页面 DOM 里没有文字，browser_read_text 拿不到。可传 selector / frameId。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: '选哪些 canvas，默认所有' },
+        frameId: { type: 'number', description: 'canvas 在某个 iframe 里时传其 frameId（见 list_frames）' },
+        maxDim: { type: 'number', description: '最长边缩放上限，默认 2048（控制返回图片大小）' },
+      },
+    },
+    run: async (a) => {
+      await connectBridge();
+      const r = await bridge.readCanvasImage({ selector: a.selector, frameId: a.frameId, maxDim: a.maxDim || 2048 });
+      const cs = ((r && r.canvases) || []).filter((c) => c.dataUrl);
+      if (!cs.length) throw new Error('没有可导出的 canvas' + (r && r.count ? '（可能是跨源污染的画布）' : ''));
+      cs.sort((x, y) => (y.width * y.height) - (x.width * x.height)); // 正文通常是最大的那个
+      const m = /^data:(image\/[a-z]+);base64,(.*)$/.exec(cs[0].dataUrl);
+      if (!m) throw new Error('canvas 图片解析失败');
+      return [
+        { type: 'text', text: `canvas ${cs[0].width}x${cs[0].height}${cs.length > 1 ? `（共 ${cs.length} 个，返回最大的）` : ''}` },
+        { type: 'image', data: m[2], mimeType: m[1] },
+      ];
+    },
+  },
+  {
     name: 'browser_read_text',
     description: '读取当前页面可见的纯文本(innerText)，用于阅读页面内容。',
     inputSchema: { type: 'object', properties: { maxLength: { type: 'number', description: '最大字符数，默认 8000' } } },

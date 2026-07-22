@@ -292,6 +292,12 @@ async function executeAction(action, params) {
       return result;
     }
 
+    // ── 直接导出已渲染的 canvas 为 PNG（绕开 hook 时序，适合静态/一次性绘制的 canvas）──
+    // 位图挂在 DOM 元素上、跨 world 共享，所以能读到页面画好的像素；配合 frameId 读 iframe 内 canvas。
+    case 'read_canvas_image': {
+      return await executeInTab(tab.id, readCanvasImage, [params.selector || 'canvas', params.format || 'image/png', params.maxDim || 0], frameId, 'MAIN');
+    }
+
     // ── 通用浏览器操控 ──
     // 关闭弹窗/遮罩层
     case 'dismiss_overlays': {
@@ -1513,6 +1519,32 @@ function networkClear() {
   const count = (window.__bridgeNetworkCaptured || []).length;
   window.__bridgeNetworkCaptured = [];
   return { cleared: count };
+}
+
+// 直接把已渲染的 canvas 导出为图片（不依赖 hook，适合静态/一次性绘制的 canvas，再交给视觉模型 OCR）
+// selector: 选哪些 canvas（默认全部）; format: image/png|image/jpeg; maxDim: 最长边缩放上限(0=不缩)
+function readCanvasImage(selector, format, maxDim) {
+  const list = Array.from(document.querySelectorAll(selector || 'canvas'));
+  const fmt = format || 'image/png';
+  const out = [];
+  for (const c of list) {
+    if (!(c instanceof HTMLCanvasElement)) continue;
+    let dataUrl = null, error = null;
+    try {
+      if (maxDim && (c.width > maxDim || c.height > maxDim)) {
+        const scale = maxDim / Math.max(c.width, c.height);
+        const tmp = document.createElement('canvas');
+        tmp.width = Math.max(1, Math.round(c.width * scale));
+        tmp.height = Math.max(1, Math.round(c.height * scale));
+        tmp.getContext('2d').drawImage(c, 0, 0, tmp.width, tmp.height);
+        dataUrl = tmp.toDataURL(fmt);
+      } else {
+        dataUrl = c.toDataURL(fmt);
+      }
+    } catch (e) { error = e.message; } // 跨源污染的 canvas → SecurityError
+    out.push({ id: c.id || '', className: c.className || '', width: c.width, height: c.height, dataUrl, error, bytes: dataUrl ? dataUrl.length : 0 });
+  }
+  return { count: out.length, url: location.href, canvases: out };
 }
 
 // ══════════════════════════════════════

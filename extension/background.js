@@ -1683,8 +1683,13 @@ function installResumeHook() {
 function readResumeCanvasSync() {
   const reconstruct = (drawCalls, yTol) => {
     yTol = yTol || 3;
-    const resume = drawCalls.filter((c) => c && String(c.canvasId || '') === 'resume');
-    const src = resume.length ? resume : drawCalls;
+    // 按 canvasId 分组，选"绘制文字最密的那个 canvas"作为正文（隔离噪声/诱饵 canvas）；
+    // 若存在 id=='resume' 且有实质内容则优先它。
+    const byCanvas = {};
+    for (const c of drawCalls) { if (!c) continue; const id = String(c.canvasId || ''); (byCanvas[id] = byCanvas[id] || []).push(c); }
+    let best = drawCalls, bestN = -1;
+    for (const id in byCanvas) { if (byCanvas[id].length > bestN) { bestN = byCanvas[id].length; best = byCanvas[id]; } }
+    const src = (byCanvas['resume'] && byCanvas['resume'].length > 20) ? byCanvas['resume'] : best;
     const numeric = [];
     for (const c of src) {
       if (!c) continue;
@@ -1737,8 +1742,13 @@ async function readResumeCanvasFull(maxScrolls) {
   const limit = maxScrolls || 15;
   const reconstruct = (drawCalls, yTol) => {
     yTol = yTol || 3;
-    const resume = drawCalls.filter((c) => c && String(c.canvasId || '') === 'resume');
-    const src = resume.length ? resume : drawCalls;
+    // 按 canvasId 分组，选"绘制文字最密的那个 canvas"作为正文（隔离噪声/诱饵 canvas）；
+    // 若存在 id=='resume' 且有实质内容则优先它。
+    const byCanvas = {};
+    for (const c of drawCalls) { if (!c) continue; const id = String(c.canvasId || ''); (byCanvas[id] = byCanvas[id] || []).push(c); }
+    let best = drawCalls, bestN = -1;
+    for (const id in byCanvas) { if (byCanvas[id].length > bestN) { bestN = byCanvas[id].length; best = byCanvas[id]; } }
+    const src = (byCanvas['resume'] && byCanvas['resume'].length > 20) ? byCanvas['resume'] : best;
     const numeric = [];
     for (const c of src) {
       if (!c) continue;

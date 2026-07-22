@@ -1,5 +1,16 @@
 # 变更记录
 
+## v1.16.0 — document_start 提前装 canvas 钩子 + 重排隔离噪声
+
+解决"钩子来晚了→只抓到零星 draw→重建乱码"的问题（实测同一简历：钩子晚装只有 ~2000 draw、乱码；成熟方案是 ~37000 draw、可读）。
+
+- **新增 document_start 内容脚本 `canvas-hook.js`**（MAIN 世界、所有 frame）：在页面任何脚本运行**之前**就 patch `fillText/strokeText`，于是 canvas 一开始绘制就被拦——包括后加载的 c-resume iframe，能拿到**完整**的绘制文字。被动只读、缓冲区有上限（40 万条、超了丢一半）。
+  - ⚠️ **需要刷新目标页面才生效**：document_start 脚本只对**新加载**的页面/frame 起作用。所以读简历前请先**刷新一次 Boss 页面**，让钩子从头装好，再打开简历。
+- **重排隔离噪声**：不再死认 `canvasId=='resume'`，改为**按 canvasId 分组、选绘制文字最密的那个 canvas**作为正文，剔除诱饵/噪声 canvas（之前混进来导致乱序 hex）。`read_resume_canvas` / `read_resume_canvas_full` 都改了。
+- 已**无头验证**：多 canvas 混合时正确挑出正文、丢弃噪声；重排分行/去重/绝对坐标正确。
+
+> **新版正确用法**：**刷新 Boss 页面**（让 document_start 钩子装好）→ 打开候选人在线简历 → `read_resume_canvas_full`。这样能拿到带坐标的完整结构化文字，不用 OCR。
+
 ## v1.15.1 — 把 canvas 简历流程暴露成 MCP 工具
 
 - 新增两个 MCP 工具，让 AI Agent 能用自然语言测/用 canvas 结构化文字读取：

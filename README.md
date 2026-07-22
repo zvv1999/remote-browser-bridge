@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-![version](https://img.shields.io/badge/version-1.15.1-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.16.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 让 **CodeNext**（云端 IDE / 容器）或 **AI Agent** 通过一个 Chrome 扩展**远程操控你本地的浏览器**。
 纯 HTTP 长轮询，无需 WebSocket；扩展**只操控名为 `Remote Control` 的标签组**，其它标签页完全不受影响。

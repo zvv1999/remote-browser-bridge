@@ -302,6 +302,12 @@ async function executeAction(action, params) {
       return await executeInTab(tab.id, readCanvasFull,
         [params.selector || 'canvas', params.container || '', params.maxScrolls || 20, params.delay || 350, params.maxDim || 0], frameId, 'MAIN');
     }
+    // 诊断：canvas 怎么画的（是否被 transferControlToOffscreen 转给 Worker、有无像素、钩子截到几条）
+    case 'canvas_diag':
+      return await executeInTab(tab.id, canvasDiag, [], frameId, 'MAIN');
+    // 主动重载 c-resume iframe，让 document_start 钩子在它重新绘制前装好
+    case 'reload_resume_frame':
+      return await executeInTab(tab.id, reloadResumeFrame, [], frameId, 'MAIN');
 
     // ── 通用浏览器操控 ──
     // 关闭弹窗/遮罩层
@@ -1554,6 +1560,78 @@ function readCanvasImage(selector, format, maxDim) {
   return { count: out.length, url: location.href, canvases: out };
 }
 
+// 诊断 canvas 到底怎么绘制的（注入函数，绕开页面 CSP 的 eval 限制）。
+// 关键信号：
+//   ctx: 'ERR:...transferred to offscreen...'  → 已 transferControlToOffscreen，画面在 Worker/OffscreenCanvas 里画的，
+//                                                主线程 fillText 钩子永远抓不到 → 只能走图片/OCR。
+//   ctx: 'ok' + hasPixels: true + capturedDraws 很少 → 有像素但不是 fillText 画的（多半 drawImage 贴位图），
+//                                                同样抓不到文本。
+//   ctx: 'ok' + hasPixels: true + capturedDraws 很多 → 是 fillText 画的，钩子有效，之前只是装晚了。
+function canvasDiag() {
+  const out = {
+    url: location.href,
+    canvasCount: 0,
+    canvases: [],
+    hookInstalled: !!window.__bossResumeCanvasHookInstalled,
+    capturedDraws: (window.__bossResumeCanvasTexts || []).length,
+    offscreenTransferred: 0,
+    // 主线程能观察到的重写痕迹
+    hasOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
+    fillTextPatched: (() => { try { return /native code/.test('') ? false : !/\[native code\]/.test(CanvasRenderingContext2D.prototype.fillText.toString()); } catch (e) { return null; } })(),
+  };
+  const cs = Array.from(document.querySelectorAll('canvas'));
+  out.canvasCount = cs.length;
+  for (const c of cs) {
+    let ctx = 'ok', hasPixels = false, transferred = false;
+    try {
+      const x = c.getContext('2d');
+      if (!x) ctx = 'null';
+      else {
+        try {
+          const w = Math.min(c.width || 1, 60), h = Math.min(c.height || 1, 60);
+          const d = x.getImageData(0, 0, w, h).data;
+          hasPixels = Array.prototype.some.call(d, (v) => v !== 0);
+        } catch (e) { ctx = 'getImageData-ERR:' + (e.message || e); }
+      }
+    } catch (e) {
+      ctx = 'ERR:' + (e.message || e);
+      if (/offscreen|transferred/i.test(ctx)) { transferred = true; out.offscreenTransferred++; }
+    }
+    out.canvases.push({
+      id: c.id || '', cls: (c.className || '').slice(0, 40),
+      w: c.width, h: c.height, cssW: c.clientWidth, cssH: c.clientHeight,
+      ctx: ctx.slice(0, 100), hasPixels, transferred,
+    });
+  }
+  return out;
+}
+
+// 主动重载 c-resume iframe：让 manifest 里 document_start / world:MAIN 的 canvas-hook.js
+// 在页面重新绘制之前就装好钩子（弹窗先前已经画完再装钩子会漏掉初始绘制）。
+function reloadResumeFrame() {
+  const frames = Array.from(document.querySelectorAll('iframe'))
+    .filter((f) => /c-resume|resume|frame/i.test(f.src || ''));
+  let reloaded = 0;
+  const srcs = [];
+  for (const f of frames) {
+    srcs.push((f.src || '').slice(0, 120));
+    try {
+      // 清掉旧 contentWindow 里可能残留的缓冲，避免混淆
+      try { if (f.contentWindow) f.contentWindow.__bossResumeCanvasTexts = []; } catch (e) {}
+      if (f.contentWindow && f.contentWindow.location) {
+        f.contentWindow.location.reload();
+        reloaded++;
+      } else {
+        f.src = f.src;
+        reloaded++;
+      }
+    } catch (e) {
+      try { f.src = f.src; reloaded++; } catch (e2) {}
+    }
+  }
+  return { frameCount: frames.length, reloaded, srcs };
+}
+
 // 逐屏滚动导出 canvas 图片（兜底虚拟化 canvas：视口大小、滚动时重绘的那种）。
 // 自动去重：静态长图每屏 toDataURL 相同 → 只保留 1 张；虚拟化的每屏不同 → 保留多张。
 async function readCanvasFull(selector, containerSel, maxScrolls, delay, maxDim) {
@@ -1714,7 +1792,21 @@ function readResumeCanvasSync() {
       if (!placed) groups.push([it]);
     }
     const lines = [];
-    for (const g of groups) { g.sort((a, b) => a.x - b.x); const line = g.map((v) => v.text).join('').trim(); if (line) { const ay = g.reduce((s, v) => s + v.y, 0) / g.length; lines.push([ay, line]); } }
+    for (const g of groups) {
+      g.sort((a, b) => a.x - b.x);
+      // 折叠"假粗体"：Boss 把同一字符在 +4px 处重画一遍做加粗，例如
+      // 2026.05 → 22002266..0055、查看全部 → 查查看看全全部部。
+      // 阈值 <=5：假粗体偏移恒为 4px，而真实相邻同字最小间距为 7px（数字）/14px（中文），
+      // 5 夹在中间，两侧各留余量。与最近保留的字符比较，可正确保留真实的 "00"/"11"。
+      const collapsed = [];
+      for (const v of g) {
+        const p = collapsed[collapsed.length - 1];
+        if (p && p.text === v.text && Math.abs(v.x - p.x) <= 5) continue;
+        collapsed.push(v);
+      }
+      const line = collapsed.map((v) => v.text).join('').trim();
+      if (line) { const ay = g.reduce((s, v) => s + v.y, 0) / g.length; lines.push([ay, line]); }
+    }
     lines.sort((a, b) => a[0] - b[0]);
     return lines.map((l) => l[1]).join('\n');
   };
@@ -1773,7 +1865,21 @@ async function readResumeCanvasFull(maxScrolls) {
       if (!placed) groups.push([it]);
     }
     const lines = [];
-    for (const g of groups) { g.sort((a, b) => a.x - b.x); const line = g.map((v) => v.text).join('').trim(); if (line) { const ay = g.reduce((s, v) => s + v.y, 0) / g.length; lines.push([ay, line]); } }
+    for (const g of groups) {
+      g.sort((a, b) => a.x - b.x);
+      // 折叠"假粗体"：Boss 把同一字符在 +4px 处重画一遍做加粗，例如
+      // 2026.05 → 22002266..0055、查看全部 → 查查看看全全部部。
+      // 阈值 <=5：假粗体偏移恒为 4px，而真实相邻同字最小间距为 7px（数字）/14px（中文），
+      // 5 夹在中间，两侧各留余量。与最近保留的字符比较，可正确保留真实的 "00"/"11"。
+      const collapsed = [];
+      for (const v of g) {
+        const p = collapsed[collapsed.length - 1];
+        if (p && p.text === v.text && Math.abs(v.x - p.x) <= 5) continue;
+        collapsed.push(v);
+      }
+      const line = collapsed.map((v) => v.text).join('').trim();
+      if (line) { const ay = g.reduce((s, v) => s + v.y, 0) / g.length; lines.push([ay, line]); }
+    }
     lines.sort((a, b) => a[0] - b[0]);
     return lines.map((l) => l[1]).join('\n');
   };

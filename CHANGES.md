@@ -1,5 +1,20 @@
 # 变更记录
 
+## v1.16.6 — Canvas 简历读取打通并验证 ✅（假粗体去重 + 一标签一中继）
+
+**实测结论（本地连真机调试确认）**：Boss 在线简历就是**主线程 `fillText` 逐字绘制**的（`canvas_diag` 确认 `getContext('2d')` 正常、未 `transferControlToOffscreen`、非 drawImage 贴图）。之前读出乱码 `3g%VB##3DSUgk` 纯粹是**钩子装晚了**——`install_resume_hook` 在 canvas 画完之后才 patch，只捡到 9-12 条零头。改用 manifest 里 `document_start` 的 `canvas-hook.js`（页面脚本运行前就 patch）后，同一份简历稳定抓到 **1191 条绘制**，重建出完整可读文本。**全程不需要 OCR。**
+
+- **假粗体去重**：Boss 把同一字符在 **+4px** 处重画一遍做加粗，导致 `2026.05` → `22002266..0055`、`查看全部` → `查查看看全全部部`。重建时新增折叠：行内按 x 排序后，同字符与**最近保留字符**间距 `<=5px` 判为假粗体副本丢弃。阈值 5 夹在"假粗体偏移 4px"与"真实相邻同字最小间距 7px（数字）/14px（中文）"之间，两侧留余量，能正确保留真实的 `00`/`11`。`read_resume_canvas` 与 `read_resume_canvas_full` 都改了。
+- **服务器：一个 Chrome 标签只保留一个活中继**。重载扩展/刷新控制台页会生成新 `browserId`，旧连接残留成僵尸最多 90 秒，偶发在新连接首次心跳前抢走默认路由，导致指令落到死连接返回空。现在新连接上报 `tabId` 时，自动踢掉同 `tabId` 的更旧连接（`/api/session-update`）。
+- **最简使用姿势**：`read_resume_canvas`**不带 frameId**（在主框架跑）即可——它会遍历所有同源子框架的 contentWindow 收齐 buffer，无需先 `list_frames` 找 c-resume 的 frameId。
+
+## v1.16.3 — 新增两个诊断动作（canvas_diag / reload_resume_frame）
+
+页面 CSP 禁 `unsafe-eval`（Boss 站隔离世界的 eval 也被页面 CSP 挡），故用**注入函数**（绕开 CSP）诊断：
+
+- **`canvas_diag`**：逐个检查 canvas —— `getContext('2d')` 是否报 `transferred to offscreen`（→ Worker/OffscreenCanvas 渲染，主线程钩子无解）、有无像素、`document_start` 钩子截到几条、`fillText` 是否被 patch。一锤定音判断渲染方式。
+- **`reload_resume_frame`**：主动 `contentWindow.location.reload()` 重载 c-resume iframe，让 `document_start` 钩子在它重绘**之前**装好（弹窗已经画完再装钩子会漏初始绘制时的兜底手段）。
+
 ## v1.16.2 — 页面信息推送失败改为静音（无害噪声）
 
 - 后台每 30s 推送页面信息（给控制台侧栏显示）经 CodeNext 代理时是跨源请求，可能被挡（Failed to fetch）。这**不影响命令/简历读取**（那走控制台页上的中继）。现在只在**第一次**失败时 `console.warn` 一条并说明可忽略，不再每 30s 刷红错（`console.error`）。

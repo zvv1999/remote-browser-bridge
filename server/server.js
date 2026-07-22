@@ -273,6 +273,19 @@ const server = http.createServer(async (req, res) => {
     session.lastSeen = Date.now();
     if (body.pageInfo) {
       session.pageInfo = body.pageInfo;
+      // 一个 Chrome 标签只保留一个活中继：新连接上报 tabId 后，踢掉同 tabId 的更旧连接
+      // （重载扩展/刷新控制台页会生成新 browserId，旧连接会残留成僵尸最多 90 秒，
+      //   偶发在新连接首次心跳前抢走默认路由，导致指令落到死连接上返回空）。
+      const tabId = body.pageInfo.tabId;
+      if (tabId != null) {
+        for (const [id, s] of connections) {
+          if (id !== body.browserId && s.pageInfo && s.pageInfo.tabId === tabId && s.lastSeen <= session.lastSeen) {
+            try { s.close(); } catch (e) {}
+            connections.delete(id);
+            console.log(`[Bridge] EVICT 僵尸中继 ${id}（同标签 ${tabId}，已被 ${body.browserId} 取代）`);
+          }
+        }
+      }
     }
     return res.end(JSON.stringify({ ok: true }));
   }

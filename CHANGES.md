@@ -1,5 +1,12 @@
 # 变更记录
 
+## v1.15.1 — 把 canvas 简历流程暴露成 MCP 工具
+
+- 新增两个 MCP 工具，让 AI Agent 能用自然语言测/用 canvas 结构化文字读取：
+  - **`browser_install_canvas_hook`**：打开内容弹窗前提前装钩子（对应 `install_resume_hook`）。
+  - **`browser_read_canvas_text`**：滚动收集 + 重建结构化文字（对应 `read_resume_canvas_full`），返回 `reconstructedText` + `drawCalls`。
+- MCP 现共 19 个工具。**改动仅 `mcp/server.js`**——扩展不用重载,只需**重启 MCP 客户端连接**让新工具出现。
+
 ## v1.15.0 — Canvas 简历钩子重写：提前装 + iframe 观察器 + 探针 + 强重排
 
 把结构化文本读取（fillText 钩子法）做到跟成熟 CDP 方案一样稳，全在扩展内、不引 CDP：

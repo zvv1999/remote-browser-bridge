@@ -58,6 +58,8 @@ claude mcp add browser -- node /绝对路径/remote-browser-bridge/mcp/server.js
 | `browser_type` | 向某个 ref 输入文字（可选回车提交） |
 | `browser_press_key` | 按键（Enter/Tab/Escape…） |
 | `browser_screenshot` | 截图，返回 PNG 图片（给视觉模型看） |
+| `browser_install_canvas_hook` | **打开 canvas 内容（如简历）弹窗之前**调用，提前装文字拦截钩子（含 iframe 观察器 + 探针） |
+| `browser_read_canvas_text` | 滚动收集并重建 canvas 渲染的**结构化文字**（先 install_canvas_hook → 开内容 → 再调它） |
 | `browser_read_canvas` | 把已渲染的 `<canvas>` 导出为图片返回（canvas 绘制正文的页面，如某些简历，用它 + 你自己 OCR） |
 | `browser_read_canvas_full` | 逐屏滚动导出 canvas 全部内容为多张图片（兜底虚拟化 canvas；静态长图自动去重成 1 张） |
 | `browser_read_text` | 读取页面可见纯文本 |

@@ -141,6 +141,30 @@ const TOOLS = [
     },
   },
   {
+    name: 'browser_install_canvas_hook',
+    description: '安装 canvas 文字拦截钩子（用于用 canvas 绘制正文的页面，如 Boss 在线简历）。' +
+      '**必须在打开该内容弹窗之前调用**：它在当前页 + 所有同源 iframe 提前装钩子，并用 MutationObserver 盯着新出现的 iframe 自动补装，赶在 canvas 绘制前。返回 probeOk（钩子是否在工作）、frames（装了几个 frame）。',
+    inputSchema: { type: 'object', properties: {} },
+    run: async () => {
+      await connectBridge();
+      const r = await bridge.installResumeHook();
+      return text('canvas 钩子已安装: ' + JSON.stringify(r));
+    },
+  },
+  {
+    name: 'browser_read_canvas_text',
+    description: '滚动收集并重建 canvas 渲染的**结构化文字**（带坐标重排，比 OCR 准）。' +
+      '正确顺序：browser_install_canvas_hook（打开弹窗前）→ 打开内容 → 再调本工具。返回重建后的文本 + drawCalls 数量。' +
+      '若拿不到（drawCalls 很少 / 文本空），改用 browser_read_canvas_full（导出图片你自己 OCR）。',
+    inputSchema: { type: 'object', properties: { maxScrolls: { type: 'number', description: '最多滚多少屏，默认 20' } } },
+    run: async (a) => {
+      await connectBridge();
+      const r = await bridge.readResumeCanvasFull(a.maxScrolls || 20);
+      if (r && r.ok === false) return text('未定位到内容弹窗: ' + (r.reason || '') + '  frames=' + JSON.stringify(r.resumeFrames || []));
+      return text(`drawCalls=${r.drawCalls || 0}  hasResumeFrame=${r.hasResumeFrame}  steps=${r.steps}\n\n${r.reconstructedText || '(空)'}`);
+    },
+  },
+  {
     name: 'browser_read_canvas',
     description: '把当前页面（或指定 frame）里已渲染的 <canvas> 导出为 PNG 图片返回，供你直接“看”并 OCR。' +
       '适合用 canvas 绘制正文/简历的页面 —— 这类页面 DOM 里没有文字，browser_read_text 拿不到。可传 selector / frameId。',

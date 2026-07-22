@@ -41,6 +41,9 @@ npm start            # 等价于 node server/server.js，默认端口 3006
 1. Chrome 打开 `chrome://extensions`
 2. 打开右上角 **开发者模式**
 3. 点 **加载已解压的扩展程序**，选择本仓库的 **`extension/`** 目录
+4. 扩展需要 **`debugger` 权限**（用于读 canvas 简历时派发可信滚轮，见下方「读 canvas 简历」一节）——若 Chrome 提示则**允许**。读简历时顶部会短暂出现“调试此浏览器”黄条，读完自动消失。
+
+> ⚠️ **改了扩展代码后**：`chrome://extensions` 点刷新 🔄 **还不够**——必须**再把控制台页面（`http://localhost:3006/`）⌘R 刷新一次**，中继才会用新版 content.js 重连；否则 `/api/browsers` 里的握手版本还是旧的、命令可能落到旧代码。确认 `chrome://extensions` 卡片上的版本号与仓库一致，且只装了**一个** Remote Bridge。
 
 ### ③ 连接 + 建受控标签组
 
@@ -174,9 +177,31 @@ Claude Code 命令行也可：`claude mcp add browser -- node /绝对路径/remo
 
 其余（建 `Remote Control` 组、跑脚本、MCP）完全一致。安全上：外层有 CodeNext 自己的登录代理，内层有 bridge 的 token，两层鉴权。
 
+> **canvas 简历读取（含 CDP 可信滚动）在 CodeNext 上一样能用**：`chrome.debugger` 由扩展在**你本地 Chrome 内部**调用，远端只发命令、收文本，不需要暴露任何调试端口、不需要反连本地。远端 agent 直接调 MCP `browser_read_canvas_text` 即可。**部署更新时记得**：整个 `extension/` 目录（含 `canvas-hook.js` + 新的 `debugger` 权限）都要同步、重载扩展（重新授予 debugger 权限）、并**刷新控制台页**重连；MCP 端同步 `mcp/server.js` 后**重启 MCP 客户端连接**。
+
 ---
 
-## 8. 验收清单
+## 8. 读 canvas 简历（Boss 在线简历等）
+
+有些页面把正文画在 `<canvas>` 上、DOM 里没有文字（反爬），且滚动是 JS 拦截滚轮直接重画、没有 DOM 滚动。这种页面用 **CDP 可信滚动**读结构化全文（比 OCR 准、零 OCR）：
+
+1. 打开候选人的**在线简历弹窗**（会加载 `c-resume` iframe）
+2. 直接调用（三选一）：
+   - **MCP**：`browser_read_canvas_text`（默认走 CDP，无需参数）
+   - **runner**：`await bridge.readResumeCanvasCdp()`
+   - **原始 action**：`read_resume_canvas_cdp`
+3. 拿到从页首到页尾的完整结构化文本
+
+**无需**预装钩子、传 frameId、手动滚动。读取时本地 Chrome 会短暂显示调试横幅、简历自动滚动几秒（读完自动恢复）。
+
+排错：
+- 读到空/乱码 → `browser_canvas_diag` 看 `hookInstalled` / `capturedDraws`；确认扩展是 **1.16.16+**（含 `canvas-hook.js` + `debugger` 权限）且权限已授予。
+- 别用 `mode:"static"`（只读缓冲、不滚动）来读这类视口大小、滚动重画的 canvas —— 会不全/交织。
+- 静态整张 canvas（不随滚动重画）才适合 `mode:"static"` 或图片+OCR（`browser_read_canvas` / `browser_read_canvas_full`）。
+
+---
+
+## 9. 验收清单
 
 - [ ] `node -v` ≥ 18
 - [ ] `npm start` 起来了，打印了 Token / Port
@@ -186,10 +211,11 @@ Claude Code 命令行也可：`claude mcp add browser -- node /绝对路径/remo
 - [ ] 有一个名为 `Remote Control` 的标签组，里面有网站
 - [ ] `node server/runner.js examples/quickstart.js` 能出结果
 - [ ]（可选）MCP 客户端里能看到 `browser_*` 工具
+- [ ]（读 canvas 简历需要）扩展版本 ≥ 1.16.16、已授予 `debugger` 权限；打开在线简历后 `browser_read_canvas_text` 能出完整全文
 
 ---
 
-## 9. 出问题？
+## 10. 出问题？
 
 先看 [README 的「常见问题」](README.md#常见问题)。最高频三条：
 

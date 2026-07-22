@@ -578,6 +578,28 @@ class Bridge {
     return this.exec('read_resume_canvas_full', { maxScrolls, ...(frameId ? { frameId } : {}) });
   }
 
+  // ★ 推荐：CDP 可信滚动读简历。用 chrome.debugger 派发可信 mouseWheel 逐屏驱动 canvas 重画，
+  // 边滚边把已知偏移写进钩子 → 重建出完整结构化全文（不用 OCR）。适用于 Boss 这类
+  // “JS 拦截滚轮、无 DOM 滚动、合成事件被 isTrusted 挡掉”的 canvas 简历。
+  // opts: { step?=180, maxSteps?=50, settle?=240, x?, y?, frameId? }
+  async readResumeCanvasCdp(opts = {}) {
+    const maxSteps = opts.maxSteps || 50;
+    const settle = opts.settle || 240;
+    const timeout = (maxSteps + 35) * settle + 30000; // 含滚到顶 + 各步等待的宽裕预算
+    return this.exec('read_resume_canvas_cdp', {
+      ...(opts.step != null ? { step: opts.step } : {}),
+      maxSteps, settle,
+      ...(opts.x != null ? { x: opts.x } : {}),
+      ...(opts.y != null ? { y: opts.y } : {}),
+      ...(opts.frameId != null ? { frameId: opts.frameId } : {}),
+    }, timeout);
+  }
+
+  // 诊断：canvas 渲染方式 / 钩子是否生效 / 截到多少绘制。opts: { frameId? }
+  async canvasDiag(opts = {}) {
+    return this.exec('canvas_diag', opts.frameId != null ? { frameId: opts.frameId } : {});
+  }
+
   // 直接把已渲染的 canvas 导出为图片（不依赖 hook 时序，适合静态/一次性绘制的 canvas → 交给视觉模型 OCR）
   // opts: { selector?, format?='image/png', maxDim?=0, frameId? }
   async readCanvasImage(opts = {}) {

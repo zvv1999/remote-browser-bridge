@@ -308,6 +308,13 @@ async function executeAction(action, params) {
     // 主动重载 c-resume iframe，让 document_start 钩子在它重新绘制前装好
     case 'reload_resume_frame':
       return await executeInTab(tab.id, reloadResumeFrame, [], frameId, 'MAIN');
+    // CDP 可信滚动读简历：chrome.debugger 派发可信 mouseWheel 驱动 canvas 逐屏重画，
+    // 边滚边把已知偏移写进 __bossResumeScrollTop，钩子据此记录正确 absY，最后重建全文。
+    case 'read_resume_canvas_cdp': {
+      const rf = frameId != null ? frameId : await findResumeFrameId(tab.id);
+      if (rf == null) throw new Error('未找到 c-resume iframe（请先打开候选人在线简历）');
+      return await readResumeCanvasCdp(tab.id, rf, params);
+    }
 
     // ── 通用浏览器操控 ──
     // 关闭弹窗/遮罩层
@@ -1579,6 +1586,9 @@ function canvasDiag() {
     hasOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
     fillTextPatched: (() => { try { return /native code/.test('') ? false : !/\[native code\]/.test(CanvasRenderingContext2D.prototype.fillText.toString()); } catch (e) { return null; } })(),
   };
+  // 文档级滚动偏移，与钩子按 canvas 检测到的滚动容器对照
+  try { const se = document.scrollingElement || document.documentElement; out.docScrollTop = (se && se.scrollTop) || 0; } catch (e) { out.docScrollTop = null; }
+  out.controlledScrollTop = Number(window.__bossResumeScrollTop || 0);
   const cs = Array.from(document.querySelectorAll('canvas'));
   out.canvasCount = cs.length;
   for (const c of cs) {
@@ -1597,13 +1607,134 @@ function canvasDiag() {
       ctx = 'ERR:' + (e.message || e);
       if (/offscreen|transferred/i.test(ctx)) { transferred = true; out.offscreenTransferred++; }
     }
+    // 复刻钩子的滚动祖先检测，报告它会用哪个容器的 scrollTop（验证滚动偏移是否取对）
+    let scEl = 'doc', scTop = out.docScrollTop;
+    try {
+      let p = c.parentElement, guard = 0;
+      while (p && guard++ < 40) {
+        let oy = '';
+        try { oy = getComputedStyle(p).overflowY; } catch (e) {}
+        if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && p.scrollHeight > p.clientHeight + 2) {
+          scEl = (p.tagName || '?').toLowerCase() + (p.className ? '.' + String(p.className).split(/\s+/)[0] : '');
+          scTop = p.scrollTop; break;
+        }
+        p = p.parentElement;
+      }
+    } catch (e) {}
     out.canvases.push({
       id: c.id || '', cls: (c.className || '').slice(0, 40),
       w: c.width, h: c.height, cssW: c.clientWidth, cssH: c.clientHeight,
       ctx: ctx.slice(0, 100), hasPixels, transferred,
+      scrollParent: scEl, scrollParentTop: scTop,
     });
   }
   return out;
+}
+
+// 从 webNavigation 帧表里找 c-resume iframe 的 frameId
+async function findResumeFrameId(tabId) {
+  try {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    const f = frames.find((x) => /\/web\/frame\/c-resume/.test(x.url || '')) || frames.find((x) => /c-resume|\/web\/frame\//.test(x.url || ''));
+    return f ? f.frameId : null;
+  } catch (e) { return null; }
+}
+
+// ── CDP 可信滚动读简历 ──
+// Boss 用 JS 拦截滚轮直接重画 canvas、且滚动偏移不落到任何 DOM 元素（scrollTop 恒 0），
+// 合成 wheel 又被 isTrusted 挡掉 —— 所以必须用 chrome.debugger 派发【可信】mouseWheel 才能驱动滚动。
+// 做法：滚到顶 → 逐步向下滚，每步先把"到位后的偏移"写进简历帧的 __bossResumeScrollTop，
+// 再派发可信滚轮触发重画；document_start 钩子按该偏移记录 absY，最后用现成重建逻辑还原全文。
+async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
+  params = params || {};
+  const step = Math.max(40, Number(params.step) || 180);
+  const maxSteps = Math.min(300, Number(params.maxSteps) || 50);
+  const settle = Math.max(40, Number(params.settle) || 240);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 定位可信滚轮落点：选"可见面积最大"的 c-resume iframe，取其可见区域中心（钳到视口内）。
+  // （iframe 实际高 2282px > 视口，直接取原始中心会落到屏外 → 滚轮打空）
+  const mainInfoR = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] }, world: 'MAIN',
+    func: () => {
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const fs = Array.from(document.querySelectorAll('iframe[src*="/web/frame/c-resume"]'));
+      let best = null, bestArea = -1, rawBest = null;
+      for (const f of fs) {
+        const r = f.getBoundingClientRect();
+        const visW = Math.max(0, Math.min(vw, r.right) - Math.max(0, r.left));
+        const visH = Math.max(0, Math.min(vh, r.bottom) - Math.max(0, r.top));
+        const area = visW * visH;
+        if (area > bestArea) {
+          bestArea = area;
+          rawBest = { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+          const vt = Math.max(0, r.top), vb = Math.min(vh, r.bottom), vl = Math.max(0, r.left), vr = Math.min(vw, r.right);
+          best = { x: Math.round((vl + vr) / 2), y: Math.round((vt + vb) / 2) };
+        }
+      }
+      return { target: best, rawRect: rawBest, vw, vh, count: fs.length, visArea: Math.round(bestArea) };
+    },
+  });
+  const info = (mainInfoR && mainInfoR[0] && mainInfoR[0].result) || {};
+  if (!info.target && (params.x == null || params.y == null)) throw new Error('主框架里找不到可见的 c-resume iframe，无法定位滚轮落点');
+  // 允许显式覆盖落点（调试/兜底）；否则用自动算出的可见中心
+  const cx = params.x != null ? Number(params.x) : info.target.x;
+  const cy = params.y != null ? Number(params.y) : info.target.y;
+
+  const inFrame = (func, args) => chrome.scripting.executeScript({ target: { tabId, frameIds: [resumeFrameId] }, world: 'MAIN', func, args: args || [] });
+  const setOffset = (v) => inFrame((o) => { window.__bossResumeScrollTop = o; }, [v]);
+  const clearBuf = () => inFrame(() => { if (window.__bossResumeCanvasTexts) window.__bossResumeCanvasTexts.length = 0; return true; });
+  const bufLen = async () => { const r = await inFrame(() => (window.__bossResumeCanvasTexts || []).length); return (r && r[0] && r[0].result) || 0; };
+  const wheel = (dy) => chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: cx, y: cy, deltaX: 0, deltaY: dy, pointerType: 'mouse' });
+
+  // Boss 用 rAF 驱动 canvas 重画，后台标签的 rAF 会被暂停 → 可信滚轮改了滚动状态但画面不重画。
+  // 所以读取期间把目标标签激活到前台，读完再切回原标签。
+  let prevActiveId = null;
+  try {
+    const t = await chrome.tabs.get(tabId);
+    const [pa] = await chrome.tabs.query({ active: true, windowId: t.windowId });
+    if (pa && pa.id !== tabId) prevActiveId = pa.id;
+    await chrome.tabs.update(tabId, { active: true });
+  } catch (e) {}
+
+  await chrome.debugger.attach({ tabId }, '1.3');
+  let done = 0, finalOffset = 0;
+  const lens = [];
+  try {
+    await sleep(200);
+    // 1) 先滚到顶
+    for (let k = 0; k < 30; k++) { try { await wheel(-2000); } catch (e) {} await sleep(25); }
+    await sleep(350);
+    // 2) 顶部：设偏移 0、清缓冲
+    await setOffset(0);
+    await clearBuf();
+    // 触发顶部(offset 0)重画：先往下一格、再回到顶，让钩子在 offset 0 记录到页首
+    // （喻颖希/年龄/自我介绍首行）——直接在顶部往上滚不会重画。
+    await setOffset(step); try { await wheel(step); } catch (e) {} await sleep(settle);
+    await setOffset(0); try { await wheel(-step); } catch (e) {} await sleep(settle);
+    // 3) 逐步向下滚：先写"到位后的偏移"，再派发可信滚轮触发重画
+    let offset = 0, lastLen = -1, stagnant = 0;
+    for (let i = 0; i < maxSteps; i++) {
+      offset += step;
+      await setOffset(offset);
+      try { await wheel(step); } catch (e) {}
+      await sleep(settle);
+      done = i + 1; finalOffset = offset;
+      const len = await bufLen();
+      lens.push(len);
+      // 只有在已经抓到内容之后、连续 4 步无增长才判定到底
+      if (len > 0 && len === lastLen) { if (++stagnant >= 4) break; } else stagnant = 0;
+      lastLen = len;
+    }
+    await setOffset(0);
+    // 4) 用现成同步重建逻辑还原（此时 buffer 里各绘制都带正确偏移）
+    const out = await inFrame(readResumeCanvasSync);
+    const data = (out && out[0] && out[0].result) || {};
+    return Object.assign({ cdp: true, steps: done, finalOffset, step, settle, wheelTarget: { x: cx, y: cy }, mainInfo: info, lens: lens.slice(0, 80) }, data);
+  } finally {
+    try { await chrome.debugger.detach({ tabId }); } catch (e) {}
+    try { if (prevActiveId != null) await chrome.tabs.update(prevActiveId, { active: true }); } catch (e) {}
+  }
 }
 
 // 主动重载 c-resume iframe：让 manifest 里 document_start / world:MAIN 的 canvas-hook.js

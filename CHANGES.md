@@ -1,5 +1,29 @@
 # 变更记录
 
+## v1.16.16 — CDP 可信滚动读 canvas 简历（攻克 Boss 反爬，读出完整全文，零 OCR）
+
+**Boss 在线简历的终极读法。** 经真机逐层排查确认了 Boss 的反爬机制、并给出唯一可行解：
+
+**为什么之前读不全 / 读出乱码（逐条排除）**：
+- 简历是**主线程 `fillText` 画的**（`canvas_diag` 确认非 OffscreenCanvas/Worker、非 drawImage）；
+- 但 canvas 只有**一个视口大小（769px CSS）**，滚动时**逐屏重画**，整份简历从不同时以真实坐标存在于 buffer；
+- 滚动是 **JS 拦截滚轮直接重画 canvas**，**没有任何 DOM 元素在滚动**（`scrollTop` 恒 0）→ 钩子拿不到绝对偏移 → 不同内容撞到同一 y → 文字交织；
+- **合成 `WheelEvent` 被 `isTrusted` 挡掉**（实测对 canvas/文档/各滚动目标派发均无效）→ 扩展合成不出可驱动滚动的事件；
+- 简历全文**不在 DOM**（`domText` 只有聊天按钮）→ 没有捷径。
+
+**解法 —— `read_resume_canvas_cdp`（新）**：用 **`chrome.debugger` 派发【可信】`Input.dispatchMouseEvent` mouseWheel** 驱动 canvas 逐屏重画（与用户原 CDP 程序同原理），边滚边把已知偏移写进 `__bossResumeScrollTop`，document_start 钩子据此记录正确 absY，最后用现成重建逻辑还原**从页首到页尾的完整简历**。要点：
+- **可信滚轮落点**：自动选“可见面积最大”的 c-resume iframe，取其**可见区域中心并钳到视口内**（iframe 实际高 2282px > 视口，直接取原始中心会落到屏外）。也可显式传 `x/y` 覆盖。
+- **顶部补偿**：滚到顶后“下一格再回顶”强制页首（喻颖希/年龄/自我介绍首行）在 offset 0 重画。
+- **前台化**：读取时把目标标签激活到前台，避免后台 rAF 暂停导致 canvas 不重画；读完切回原标签。
+- 参数 `{ step=180, maxSteps=50, settle=240, x?, y? }`；到底自动停。
+- 新增权限 **`debugger`**。运行时本地 Chrome 顶部会短暂显示“调试此浏览器”黄条、简历自动滚动几秒，读完自动恢复。
+
+**远程友好**：`chrome.debugger` 由扩展在**本地** Chrome 内部调用，远端（CodeNext）只发命令 + 收文本，**不需要暴露任何调试端口、不需要反连本地**——比“外部进程直连 Chrome 调试端口”的老 CDP 方案更安全、更适合远程。
+
+**接口补齐**：`browser_read_canvas_text`（MCP）默认改走 CDP 全文读取（`mode:"static"` 可退回只读缓冲）；runner 新增 `readResumeCanvasCdp()` / `canvasDiag()`。诊断动作 `canvas_diag` / `reload_resume_frame` 保留；一次性探针 `wheel_probe`、临时字段 `passStats/rawSample` 已移除。
+
+> **用法**：打开候选人在线简历弹窗 → 调 `browser_read_canvas_text`（或 action `read_resume_canvas_cdp`）→ 拿到完整结构化全文。无需预装钩子、无需 frameId、无需手动滚。
+
 ## v1.16.7 — MCP 层接到"能用的那条路"（远端读不到简历的真正根因）
 
 **扩展代码不变（仍 1.16.6），只改 `mcp/server.js` + `package.json`。** 远端 agent 走 MCP 却始终读不到简历，根因是 MCP 暴露的工具接错了函数：

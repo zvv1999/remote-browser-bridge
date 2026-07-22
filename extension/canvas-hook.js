@@ -15,6 +15,27 @@
     var CAP = 400000; // 上限，防止 canvas 动画/游戏页无限累积
     var origFill = CRC.prototype.fillText;
     var origStroke = CRC.prototype.strokeText;
+    // 视口大小的 canvas 会随滚动重绘：绝对行位置 = 绘制 y + 滚动偏移。
+    // 必须在“绘制时”读到真实滚动偏移，否则不同滚动位置的不同内容会拿到相同 y → 撞行/文字交织。
+    // 优先级：受控扫描显式设的 __bossResumeScrollTop > canvas 的滚动祖先容器 > 文档 scrollingElement。
+    function currentScrollTop(canvas) {
+      if (window.__bossResumeScrollTop) return Number(window.__bossResumeScrollTop) || 0;
+      try {
+        // 找并缓存 canvas 的滚动祖先（遍历一次即可，避免每次绘制都走 DOM 链）
+        if (canvas && canvas.__bossScrollParent == null) {
+          var p = canvas.parentElement, found = null, guard = 0;
+          while (p && guard++ < 40) {
+            var oy = '';
+            try { oy = getComputedStyle(p).overflowY; } catch (e) {}
+            if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && p.scrollHeight > p.clientHeight + 2) { found = p; break; }
+            p = p.parentElement;
+          }
+          if (found) { try { canvas.__bossScrollParent = found; } catch (e) {} }
+        }
+        var sc = (canvas && canvas.__bossScrollParent) || document.scrollingElement || document.documentElement;
+        return (sc && sc.scrollTop) || 0;
+      } catch (e) { return 0; }
+    }
     function record(kind, ctx, args) {
       try {
         var buf = window.__bossResumeCanvasTexts;
@@ -31,7 +52,7 @@
           canvasId: (canvas && canvas.id) || '',
           canvasWidth: (canvas && canvas.width) || 0,
           canvasHeight: (canvas && canvas.height) || 0,
-          scrollTop: Number(window.__bossResumeScrollTop || 0),
+          scrollTop: currentScrollTop(canvas),
           at: Date.now(),
         });
       } catch (e) {}

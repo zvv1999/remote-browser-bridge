@@ -154,30 +154,41 @@ const TOOLS = [
   },
   {
     name: 'browser_read_canvas_text',
-    description: '读取 canvas 渲染的**结构化文字**（带坐标重排，比 OCR 准；用于 Boss 在线简历这类 DOM 里没有文字、正文画在 <canvas> 上的页面）。' +
-      '**无需预装钩子、无需传 frameId**：扩展的 document_start 钩子（canvas-hook.js）已在页面绘制前自动拦截，本工具直接从所有同源 frame 收集并重建。' +
-      '用法：打开候选人在线简历弹窗 → 直接调本工具。返回重建文本 + drawCalls。' +
-      'drawCalls 为 0 = 钩子没抓到（多半：扩展不是含 canvas-hook.js 的 1.16.x，或重载扩展后没把简历弹窗关掉重开）——先用 browser_canvas_diag 确认。',
-    inputSchema: { type: 'object', properties: { maxScrolls: { type: 'number', description: '兜底滚动版最多滚多少屏，默认 20' } } },
+    description: '读取 canvas 渲染的**结构化全文**（带坐标重排，比 OCR 准；用于 Boss 在线简历这类 DOM 里没有文字、正文画在 <canvas> 上的页面）。' +
+      '默认走 **CDP 可信滚动**：用 chrome.debugger 派发可信 mouseWheel 逐屏驱动 canvas 重画，边滚边记录偏移，重建出从页首到页尾的完整简历——' +
+      'Boss 用 JS 拦截滚轮、无 DOM 滚动、合成事件被 isTrusted 挡掉，只有这条路能拿到完整全文。' +
+      '**无需预装钩子、无需传 frameId、无需手动滚**：打开候选人在线简历弹窗 → 直接调本工具。' +
+      '运行时你的本地 Chrome 会短暂显示“调试此浏览器”黄条、简历会自动滚动几秒（读完自动恢复）。' +
+      'mode="static" 可跳过滚动只读当前已捕获缓冲（更快，但只适合静态整张 canvas，读不全就别用）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', description: '"cdp"（默认，可信滚动读全文）| "static"（只读当前缓冲，不滚动）' },
+        step: { type: 'number', description: 'CDP 每步滚动像素，默认 180' },
+        maxSteps: { type: 'number', description: 'CDP 最多滚多少屏，默认 50（到底自动停）' },
+      },
+    },
     run: async (a) => {
       await connectBridge();
-      // 首选同步版：document_start 钩子已在绘制前抓好，遍历所有同源子框架收集 buffer 重建，
-      // 不用滚动、不用 frameId、不用预装钩子。静态整张长图（Boss 简历）一次到位。
-      const sync = await bridge.readResumeCanvas();
-      const syncText = ((sync && sync.reconstructedText) || '').trim();
-      if (syncText.length >= 20) {
-        return text(`drawCalls=${(sync && sync.drawCallsCount) || 0}（同步收集，无需滚动）\n\n${syncText}`);
+      // static 模式：只读当前缓冲（快，适合静态整张 canvas）
+      if (a.mode === 'static') {
+        const sync = await bridge.readResumeCanvas();
+        return text(`drawCalls=${(sync && sync.drawCallsCount) || 0}（static，未滚动）\n\n${(sync && sync.reconstructedText) || '(空)'}`);
       }
-      // 兜底：虚拟化/逐屏重绘的 canvas 才需要滚动版
-      const full = await bridge.readResumeCanvasFull(a.maxScrolls || 20);
-      if (full && full.ok === false) {
+      // 默认：CDP 可信滚动读全文
+      try {
+        const r = await bridge.readResumeCanvasCdp({ step: a.step, maxSteps: a.maxSteps });
+        const t = ((r && r.reconstructedText) || '').trim();
+        if (t.length >= 20) {
+          return text(`drawCalls=${r.drawCallsCount || 0}  steps=${r.steps}  wheelTarget=${JSON.stringify(r.wheelTarget)}（CDP 可信滚动）\n\n${t}`);
+        }
         return text(
-          `未读到简历文字。诊断：同步 drawCalls=${(sync && sync.drawCallsCount) || 0}；滚动版也未定位到弹窗（${full.reason || ''}）。\n` +
-          `多半是 canvas 钩子没抓到绘制——请确认：① 已加载含 canvas-hook.js 的 1.16.x 扩展；② 重载扩展后把简历弹窗【关掉重开】（document_start 钩子只对新加载的 iframe 生效）。\n` +
-          `可调 browser_canvas_diag 看 capturedDraws / hookInstalled。`
+          `CDP 读取未拿到文字（drawCalls=${r && r.drawCallsCount}）。请确认：① 已打开候选人在线简历弹窗；② 扩展是含 debugger 权限的 1.16.14+；③ 已授予 debugger 权限。\n` +
+          `可用 browser_canvas_diag 看 hookInstalled/capturedDraws；wheelTarget=${JSON.stringify(r && r.wheelTarget)}。`
         );
+      } catch (e) {
+        return text(`CDP 读取出错：${e.message}\n多半是扩展缺 debugger 权限或不是 1.16.14+。可先用 mode="static" 或 browser_canvas_diag 排查。`);
       }
-      return text(`drawCalls=${full.drawCalls || 0}  hasResumeFrame=${full.hasResumeFrame}  steps=${full.steps}\n\n${full.reconstructedText || '(空)'}`);
     },
   },
   {

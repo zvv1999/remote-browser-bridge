@@ -1822,7 +1822,8 @@ async function readResumeCanvasFull(maxScrolls) {
     try { window.__bossResumeScrollTop = top; } catch (e) {}
     try { detailWrap.scrollTop = top; } catch (e) {}
     try { detailWrap.dispatchEvent(new Event('scroll', { bubbles: true })); } catch (e) {}
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 300))));
+    // 用 setTimeout 而非 requestAnimationFrame：后台/隐藏标签页的 rAF 会被暂停，会导致本函数永远卡住
+    await new Promise((r) => setTimeout(r, 350));
     collect();
   }
   try { detailWrap.scrollTop = 0; } catch (e) {}

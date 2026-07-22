@@ -1,5 +1,16 @@
 # 变更记录
 
+## v1.16.7 — MCP 层接到"能用的那条路"（远端读不到简历的真正根因）
+
+**扩展代码不变（仍 1.16.6），只改 `mcp/server.js` + `package.json`。** 远端 agent 走 MCP 却始终读不到简历，根因是 MCP 暴露的工具接错了函数：
+
+- `browser_read_canvas_text` 之前只接 `readResumeCanvasFull()`（滚动版，在主框架会走 `resume-detail-wrap not found` 放弃分支），**没接**本地验证能出全文的同步版 `read_resume_canvas`。远端 agent 因此一直在给错的函数打补丁。现在**改为首选同步版**（`bridge.readResumeCanvas()`：document_start 钩子已在绘制前抓好，遍历所有同源子框架收集 buffer 重建，无需滚动/frameId/预装钩子），拿不到再兜底滚动版；失败信息也改成可操作的诊断提示。
+- **新增 MCP 工具 `browser_canvas_diag`**：自动从 `list_frames` 定位 c-resume iframe 并在其中跑 `canvas_diag`，返回 `capturedDraws`（钩子截到几条）、是否 offscreen、`hookInstalled`。`capturedDraws` 上千=钩子有效；为 0=把简历弹窗关掉重开；报 `unknown action`=扩展是旧版。MCP 现共 **20** 个工具。
+- `browser_install_canvas_hook` 描述改为"通常不需要"（document_start 钩子已自动装，它只是事后补救手段）。
+- 修正 `package.json` 版本漂移（之前一直停在 1.16.2，MCP serverInfo 读的就是它）。
+
+> **远端部署本次修复**：同步 `mcp/server.js`（+`package.json`）到远端 → **重启 MCP 客户端连接**让新工具生效。扩展无需重载（代码没变）。前提是远端扩展已是含 `canvas-hook.js` 的 1.16.x。
+
 ## v1.16.6 — Canvas 简历读取打通并验证 ✅（假粗体去重 + 一标签一中继）
 
 **实测结论（本地连真机调试确认）**：Boss 在线简历就是**主线程 `fillText` 逐字绘制**的（`canvas_diag` 确认 `getContext('2d')` 正常、未 `transferControlToOffscreen`、非 drawImage 贴图）。之前读出乱码 `3g%VB##3DSUgk` 纯粹是**钩子装晚了**——`install_resume_hook` 在 canvas 画完之后才 patch，只捡到 9-12 条零头。改用 manifest 里 `document_start` 的 `canvas-hook.js`（页面脚本运行前就 patch）后，同一份简历稳定抓到 **1191 条绘制**，重建出完整可读文本。**全程不需要 OCR。**

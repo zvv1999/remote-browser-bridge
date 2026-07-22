@@ -142,8 +142,9 @@ const TOOLS = [
   },
   {
     name: 'browser_install_canvas_hook',
-    description: '安装 canvas 文字拦截钩子（用于用 canvas 绘制正文的页面，如 Boss 在线简历）。' +
-      '**必须在打开该内容弹窗之前调用**：它在当前页 + 所有同源 iframe 提前装钩子，并用 MutationObserver 盯着新出现的 iframe 自动补装，赶在 canvas 绘制前。返回 probeOk（钩子是否在工作）、frames（装了几个 frame）。',
+    description: '（通常不需要）手动补装 canvas 文字拦截钩子。' +
+      '正常情况扩展的 document_start 脚本 canvas-hook.js 已在页面绘制前自动装好，直接用 browser_read_canvas_text 即可。' +
+      '仅当钩子疑似没生效（browser_canvas_diag 显示 capturedDraws=0）时，作为对已打开页面的补救手段调用；注意它是“事后补装”，赶不上已经画完的 canvas，最可靠的做法仍是把简历弹窗关掉重开让 document_start 钩子从头装。返回 probeOk、frames。',
     inputSchema: { type: 'object', properties: {} },
     run: async () => {
       await connectBridge();
@@ -153,15 +154,49 @@ const TOOLS = [
   },
   {
     name: 'browser_read_canvas_text',
-    description: '滚动收集并重建 canvas 渲染的**结构化文字**（带坐标重排，比 OCR 准）。' +
-      '正确顺序：browser_install_canvas_hook（打开弹窗前）→ 打开内容 → 再调本工具。返回重建后的文本 + drawCalls 数量。' +
-      '若拿不到（drawCalls 很少 / 文本空），改用 browser_read_canvas_full（导出图片你自己 OCR）。',
-    inputSchema: { type: 'object', properties: { maxScrolls: { type: 'number', description: '最多滚多少屏，默认 20' } } },
+    description: '读取 canvas 渲染的**结构化文字**（带坐标重排，比 OCR 准；用于 Boss 在线简历这类 DOM 里没有文字、正文画在 <canvas> 上的页面）。' +
+      '**无需预装钩子、无需传 frameId**：扩展的 document_start 钩子（canvas-hook.js）已在页面绘制前自动拦截，本工具直接从所有同源 frame 收集并重建。' +
+      '用法：打开候选人在线简历弹窗 → 直接调本工具。返回重建文本 + drawCalls。' +
+      'drawCalls 为 0 = 钩子没抓到（多半：扩展不是含 canvas-hook.js 的 1.16.x，或重载扩展后没把简历弹窗关掉重开）——先用 browser_canvas_diag 确认。',
+    inputSchema: { type: 'object', properties: { maxScrolls: { type: 'number', description: '兜底滚动版最多滚多少屏，默认 20' } } },
     run: async (a) => {
       await connectBridge();
-      const r = await bridge.readResumeCanvasFull(a.maxScrolls || 20);
-      if (r && r.ok === false) return text('未定位到内容弹窗: ' + (r.reason || '') + '  frames=' + JSON.stringify(r.resumeFrames || []));
-      return text(`drawCalls=${r.drawCalls || 0}  hasResumeFrame=${r.hasResumeFrame}  steps=${r.steps}\n\n${r.reconstructedText || '(空)'}`);
+      // 首选同步版：document_start 钩子已在绘制前抓好，遍历所有同源子框架收集 buffer 重建，
+      // 不用滚动、不用 frameId、不用预装钩子。静态整张长图（Boss 简历）一次到位。
+      const sync = await bridge.readResumeCanvas();
+      const syncText = ((sync && sync.reconstructedText) || '').trim();
+      if (syncText.length >= 20) {
+        return text(`drawCalls=${(sync && sync.drawCallsCount) || 0}（同步收集，无需滚动）\n\n${syncText}`);
+      }
+      // 兜底：虚拟化/逐屏重绘的 canvas 才需要滚动版
+      const full = await bridge.readResumeCanvasFull(a.maxScrolls || 20);
+      if (full && full.ok === false) {
+        return text(
+          `未读到简历文字。诊断：同步 drawCalls=${(sync && sync.drawCallsCount) || 0}；滚动版也未定位到弹窗（${full.reason || ''}）。\n` +
+          `多半是 canvas 钩子没抓到绘制——请确认：① 已加载含 canvas-hook.js 的 1.16.x 扩展；② 重载扩展后把简历弹窗【关掉重开】（document_start 钩子只对新加载的 iframe 生效）。\n` +
+          `可调 browser_canvas_diag 看 capturedDraws / hookInstalled。`
+        );
+      }
+      return text(`drawCalls=${full.drawCalls || 0}  hasResumeFrame=${full.hasResumeFrame}  steps=${full.steps}\n\n${full.reconstructedText || '(空)'}`);
+    },
+  },
+  {
+    name: 'browser_canvas_diag',
+    description: '诊断 canvas 简历为什么读不到（自动定位 c-resume iframe 并在其中检查）。返回：canvas 是否被 transferControlToOffscreen 转给 Worker、有无像素、document_start 钩子截到多少条绘制（capturedDraws）、钩子是否已装。' +
+      'capturedDraws 上千 = 钩子有效，直接用 browser_read_canvas_text；为 0 = 钩子没装（把简历弹窗关掉重开）；报 “unknown action” = 扩展是不含本功能的旧版。',
+    inputSchema: { type: 'object', properties: { frameId: { type: 'number', description: 'c-resume iframe 的 frameId（可选，默认自动从 list_frames 定位）' } } },
+    run: async (a) => {
+      await connectBridge();
+      let frameId = a.frameId;
+      if (frameId == null) {
+        try {
+          const frames = await bridge.exec('list_frames', {});
+          const rf = (frames || []).find((f) => /c-resume|\/web\/frame\//.test(f.url || ''));
+          if (rf) frameId = rf.frameId;
+        } catch (e) { /* 定位失败就用主框架 */ }
+      }
+      const r = await bridge.exec('canvas_diag', frameId != null ? { frameId } : {});
+      return text(`frameId=${frameId != null ? frameId : '(主框架)'}\n` + JSON.stringify(r, null, 2));
     },
   },
   {

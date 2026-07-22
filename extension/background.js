@@ -450,7 +450,9 @@ async function executeAction(action, params) {
     case 'get_html':
       return await executeInTab(tab.id, getHtml, [params.selector || 'body', params.maxLength || 10000], frameId);
     case 'evaluate':
-      return await executeInTab(tab.id, evalCode, [params.code], frameId);
+      // 默认隔离世界（不受页面 CSP 影响，但读不到页面 JS 变量）；传 world:'MAIN' 可读页面变量/调页面函数，
+      // 但此时 eval 会受页面 CSP 限制（禁 unsafe-eval 的页面会失败 → 返回 error）。
+      return await executeInTab(tab.id, evalCode, [params.code], frameId, params.world === 'MAIN' ? 'MAIN' : undefined);
     case 'wait_for':
       return await executeInTab(tab.id, waitForElement, [params.selector, params.timeout || 10000], frameId);
     case 'sleep':

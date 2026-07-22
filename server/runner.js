@@ -426,8 +426,9 @@ class Bridge {
     return this.exec('get_cookies', url ? { url } : {});
   }
 
-  async evaluate(code) {
-    return this.exec('evaluate', { code });
+  // opts.world: 'MAIN' 在页面主世界执行（能读页面变量/调页面函数；但 eval 受页面 CSP 限制）
+  async evaluate(code, opts = {}) {
+    return this.exec('evaluate', { code, ...(opts.world === 'MAIN' ? { world: 'MAIN' } : {}) });
   }
 
   // ── 基础 DOM 操作 ──

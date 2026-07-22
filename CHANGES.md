@@ -1,5 +1,10 @@
 # 变更记录
 
+## v1.13.1 — `evaluate` 支持 world 参数
+
+- `evaluate` / `bridge.evaluate(code, {world:'MAIN'})` / MCP `browser_evaluate` 的 `world` 现在可选 `MAIN`，在页面主世界执行（能读页面变量、调页面函数）。
+- ⚠️ **限制**：`evaluate` 本质是 `eval`，在 MAIN 世界里 `eval` 仍受**页面 CSP** 约束——禁 `unsafe-eval` 的页面（如 Boss 直聘）会失败并返回 `error`。**读 canvas 像素请用 `read_canvas_image`**（它把 `toDataURL` 作为注入函数直接执行，不走 eval，不受 CSP）。默认仍是隔离世界。
+
 ## v1.13.0 — 直接导出 canvas 图片（更稳的 canvas 内容读取）
 
 - **新增 `read_canvas_image`**（runner `readCanvasImage({selector?,frameId?,maxDim?})`、MCP `browser_read_canvas`）：直接把**已渲染**的 `<canvas>` 导出为 PNG 返回，交给视觉模型 OCR。

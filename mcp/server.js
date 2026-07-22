@@ -263,11 +263,19 @@ const TOOLS = [
   },
   {
     name: 'browser_evaluate',
-    description: '【高级】在页面执行一段 JS 表达式并返回结果。运行于隔离世界(不受页面 CSP 限制，但读不到页面自身 JS 变量)。',
-    inputSchema: { type: 'object', properties: { code: { type: 'string', description: '要执行的 JS 表达式' } }, required: ['code'] },
+    description: '【高级】在页面执行一段 JS 表达式并返回结果。默认隔离世界(不受页面 CSP 限制，但读不到页面自身 JS 变量)；' +
+      'world="MAIN" 可读页面变量/调页面函数，但 eval 会受页面 CSP 限制(禁 unsafe-eval 的页面会失败)。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: '要执行的 JS 表达式' },
+        world: { type: 'string', enum: ['ISOLATED', 'MAIN'], description: '执行世界，默认 ISOLATED' },
+      },
+      required: ['code'],
+    },
     run: async (a) => {
       await connectBridge();
-      const r = await bridge.evaluate(a.code);
+      const r = await bridge.evaluate(a.code, a.world === 'MAIN' ? { world: 'MAIN' } : {});
       return text(JSON.stringify(r));
     },
   },

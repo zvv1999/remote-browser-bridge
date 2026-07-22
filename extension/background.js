@@ -1866,6 +1866,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } catch (e) {}
 });
 
+// 页面信息推送是"可选遥测"（给控制台侧栏显示实时页面信息）。经 CodeNext 代理时，后台 service worker
+// 的这条跨源请求可能被挡（Failed to fetch），但**不影响命令执行/简历读取**（那走的是控制台页上的中继）。
+// 侧栏本来也靠 list_tabs 轮询兜底，所以这里失败只提示一次、不刷屏。
+let __pushWarned = false;
 async function pushPageInfo(tab) {
   if (!relayConnected || !relayBridgeUrl) return;
   try {
@@ -1890,9 +1894,13 @@ async function pushPageInfo(tab) {
         }
       }),
     });
-    console.log('[Bridge] 📄 页面信息已推送:', tab.title, cookieCount, 'cookies');
+    __pushWarned = false;
   } catch (e) {
-    console.error('[Bridge] 推送页面信息失败:', e.message);
+    if (!__pushWarned) {
+      __pushWarned = true;
+      console.warn('[Bridge] 页面信息推送不可用（可忽略，不影响命令/简历读取）：' + e.message +
+        ' —— 常见于经 CodeNext 代理时后台跨源请求被拦；控制台侧栏改用 list_tabs 轮询即可。');
+    }
   }
 }
 

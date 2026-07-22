@@ -297,6 +297,11 @@ async function executeAction(action, params) {
     case 'read_canvas_image': {
       return await executeInTab(tab.id, readCanvasImage, [params.selector || 'canvas', params.format || 'image/png', params.maxDim || 0], frameId, 'MAIN');
     }
+    // 逐屏滚动导出（兜底虚拟化 canvas；静态长图会自动去重成 1 张）
+    case 'read_canvas_full': {
+      return await executeInTab(tab.id, readCanvasFull,
+        [params.selector || 'canvas', params.container || '', params.maxScrolls || 20, params.delay || 350, params.maxDim || 0], frameId, 'MAIN');
+    }
 
     // ── 通用浏览器操控 ──
     // 关闭弹窗/遮罩层
@@ -1547,6 +1552,58 @@ function readCanvasImage(selector, format, maxDim) {
     out.push({ id: c.id || '', className: c.className || '', width: c.width, height: c.height, dataUrl, error, bytes: dataUrl ? dataUrl.length : 0 });
   }
   return { count: out.length, url: location.href, canvases: out };
+}
+
+// 逐屏滚动导出 canvas 图片（兜底虚拟化 canvas：视口大小、滚动时重绘的那种）。
+// 自动去重：静态长图每屏 toDataURL 相同 → 只保留 1 张；虚拟化的每屏不同 → 保留多张。
+async function readCanvasFull(selector, containerSel, maxScrolls, delay, maxDim) {
+  selector = selector || 'canvas';
+  maxScrolls = maxScrolls || 20;
+  delay = delay || 350;
+  const pickCanvas = () => {
+    const list = Array.from(document.querySelectorAll(selector)).filter(c => c instanceof HTMLCanvasElement);
+    list.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+    return list[0] || null;
+  };
+  const exportCanvas = (c) => {
+    try {
+      if (maxDim && (c.width > maxDim || c.height > maxDim)) {
+        const scale = maxDim / Math.max(c.width, c.height);
+        const t = document.createElement('canvas');
+        t.width = Math.max(1, Math.round(c.width * scale)); t.height = Math.max(1, Math.round(c.height * scale));
+        t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+        return t.toDataURL('image/png');
+      }
+      return c.toDataURL('image/png');
+    } catch (e) { return null; }
+  };
+  let container = null;
+  if (containerSel) { try { container = document.querySelector(containerSel); } catch (e) {} }
+  if (!container) {
+    container = document.querySelector('.resume-detail-wrap, .lib-standard-resume, .dialog-wrap [class*="scroll"], [class*="resume"] [class*="scroll"]')
+      || document.scrollingElement || document.documentElement;
+  }
+  const clientH = container.clientHeight || window.innerHeight || 800;
+  const firstCanvas = pickCanvas();
+  const totalH = Math.max(container.scrollHeight || 0, (firstCanvas ? firstCanvas.height : 0), clientH);
+  const steps = Math.min(maxScrolls, Math.max(1, Math.ceil(totalH / Math.max(clientH, 1))));
+
+  const frames = [];
+  const seen = new Set();
+  for (let i = 0; i < steps; i++) {
+    try { container.scrollTop = i * clientH; } catch (e) {}
+    await new Promise(r => setTimeout(r, delay));
+    const c = pickCanvas();
+    if (!c) continue;
+    const url = exportCanvas(c);
+    if (!url) continue;
+    const sig = url.length + '|' + url.slice(0, 96) + '|' + url.slice(url.length >> 1, (url.length >> 1) + 96) + '|' + url.slice(-96);
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    frames.push({ index: frames.length, scrollTop: container.scrollTop, width: c.width, height: c.height, bytes: url.length, dataUrl: url });
+  }
+  try { container.scrollTop = 0; } catch (e) {}
+  return { count: frames.length, steps, containerTag: (container.className || container.tagName || ''), canvasCount: document.querySelectorAll(selector).length, frames };
 }
 
 // ══════════════════════════════════════

@@ -1,5 +1,12 @@
 # 变更记录
 
+## v1.14.0 — `read_canvas_full`：逐屏滚动导出，兜底虚拟化 canvas
+
+- **新增 `read_canvas_full`**（runner `readCanvasFull({selector?,container?,maxScrolls?,delay?,maxDim?,frameId?})`、MCP `browser_read_canvas_full`）：自动找滚动容器、**逐屏滚动 + 每屏 `toDataURL`**，返回多张图片。
+  - **自动去重**：静态长图每屏导出相同 → **去重成 1 张**（拿到完整长图）；"视口大小、滚动时重绘"的**虚拟化 canvas** 每屏不同 → 保留多张，覆盖全文。这样两种情况一个方法都能处理。
+  - 用途：`read_canvas_image` 一次拿不全（返回的 `height` ≈ 一屏）时用它兜底；OCR 时按 `frames` 顺序拼接。MCP 版直接返回多张图片（上限 15 张）。
+- 已**无头验证**：静态 800×5000 canvas → 7 步去重成 1 张完整图；虚拟化 800×800 canvas → 7 张不同帧。
+
 ## v1.13.1 — `evaluate` 支持 world 参数
 
 - `evaluate` / `bridge.evaluate(code, {world:'MAIN'})` / MCP `browser_evaluate` 的 `world` 现在可选 `MAIN`，在页面主世界执行（能读页面变量、调页面函数）。

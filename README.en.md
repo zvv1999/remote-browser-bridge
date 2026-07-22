@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-![version](https://img.shields.io/badge/version-1.13.1-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
+![version](https://img.shields.io/badge/version-1.14.0-7c8cf8) ![manifest](https://img.shields.io/badge/Chrome-MV3-4caf50) ![node](https://img.shields.io/badge/node-%3E%3D18-339933) ![deps](https://img.shields.io/badge/dependencies-0-brightgreen) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 Drive your **local** Chrome from a cloud IDE (**CodeNext**) or an **AI agent**, through a small
 MV3 extension + a zero-dependency Node bridge. HTTP long-polling only, no WebSocket. The
@@ -50,9 +50,9 @@ is left alone.
   (action / duration / pass-fail / optional screenshots).
 - 🔴 **Codegen (record → script) + iframe piercing** — `startRecording()`, act manually, then
   `saveScript()` emits a runnable script; locators/snapshot pierce same-origin iframes.
-- 🎨 **Canvas content extraction** — `readCanvasImage()` exports an already-rendered canvas as an
-  image for a vision model to OCR (recommended, robust); or `install_resume_hook` intercepts
-  `fillText` to rebuild structured text (timing-sensitive).
+- 🎨 **Canvas content extraction** — `readCanvasImage()` exports a rendered canvas as an image for
+  a vision model to OCR (recommended); `readCanvasFull()` scroll-captures a virtualized canvas; or
+  `install_resume_hook` intercepts `fillText` to rebuild structured text.
 - 📊 **Console dashboard** — Tabs / Screenshot / Network / Cookies panels, quick buttons + a
   command toolbar.
 - ⚙️ **Zero dependencies, two ways to script** — pure Node (`http`/`crypto`); flexible JS scripts

@@ -167,6 +167,33 @@ const TOOLS = [
     },
   },
   {
+    name: 'browser_read_canvas_full',
+    description: '逐屏滚动导出 canvas 的全部内容为多张图片（兜底“视口大小、滚动时重绘”的虚拟化 canvas）。' +
+      '静态长图会自动去重成 1 张。返回多张图片，你逐张 OCR 后按顺序拼接即可。可传 selector / frameId / container。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string' }, frameId: { type: 'number' },
+        container: { type: 'string', description: '滚动容器选择器（可选，自动探测）' },
+        maxScrolls: { type: 'number', description: '最多滚多少屏，默认 20' },
+        maxDim: { type: 'number', description: '每帧最长边缩放上限，默认 2048' },
+      },
+    },
+    run: async (a) => {
+      await connectBridge();
+      const r = await bridge.readCanvasFull({ selector: a.selector, frameId: a.frameId, container: a.container, maxScrolls: a.maxScrolls || 20, maxDim: a.maxDim || 2048 });
+      const frames = ((r && r.frames) || []).filter((f) => f.dataUrl);
+      if (!frames.length) throw new Error('没有导出到 canvas 帧');
+      const cap = frames.slice(0, 15);
+      const out = [{ type: 'text', text: `共 ${frames.length} 帧（去重后）${frames.length > cap.length ? `，返回前 ${cap.length} 帧` : ''}，按顺序拼接` }];
+      for (const f of cap) {
+        const m = /^data:(image\/[a-z]+);base64,(.*)$/.exec(f.dataUrl);
+        if (m) out.push({ type: 'image', data: m[2], mimeType: m[1] });
+      }
+      return out;
+    },
+  },
+  {
     name: 'browser_read_text',
     description: '读取当前页面可见的纯文本(innerText)，用于阅读页面内容。',
     inputSchema: { type: 'object', properties: { maxLength: { type: 'number', description: '最大字符数，默认 8000' } } },

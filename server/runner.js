@@ -587,6 +587,18 @@ class Bridge {
     });
   }
 
+  // 逐屏滚动导出 canvas（兜底虚拟化 canvas）。返回 { count, frames:[{dataUrl,...}] }；
+  // 静态长图会自动去重成 1 张。opts: { selector?, container?, maxScrolls?=20, delay?=350, maxDim?, frameId? }
+  async readCanvasFull(opts = {}) {
+    const maxScrolls = opts.maxScrolls || 20;
+    const delay = opts.delay || 350;
+    const timeout = maxScrolls * delay + 15000;
+    return this.exec('read_canvas_full', {
+      selector: opts.selector, container: opts.container, maxScrolls, delay, maxDim: opts.maxDim,
+      ...(opts.frameId != null ? { frameId: opts.frameId } : {}),
+    }, timeout);
+  }
+
   // ── 标签页管理 ──
   async closeTab(tabId) {
     return this.exec('close_tab', tabId ? { tabId } : {});

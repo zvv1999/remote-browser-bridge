@@ -1,5 +1,9 @@
 # 变更记录
 
+## v1.14.1 — `read_canvas_full` 自动找弹窗滚动容器
+
+- `read_canvas_full` 的滚动容器探测改为**从 canvas 往上找"真正能滚的那个祖先"**（`overflow-y:auto/scroll` 且 `scrollHeight>clientHeight`）——模态弹窗（如 Boss 简历）自己有滚动区、页面背后锁死时，之前靠类名猜可能滚错对象；现在能自动命中弹窗内的滚动区。仍可用 `container` 参数手动指定。
+
 ## v1.14.0 — `read_canvas_full`：逐屏滚动导出，兜底虚拟化 canvas
 
 - **新增 `read_canvas_full`**（runner `readCanvasFull({selector?,container?,maxScrolls?,delay?,maxDim?,frameId?})`、MCP `browser_read_canvas_full`）：自动找滚动容器、**逐屏滚动 + 每屏 `toDataURL`**，返回多张图片。

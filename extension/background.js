@@ -1577,8 +1577,21 @@ async function readCanvasFull(selector, containerSel, maxScrolls, delay, maxDim)
       return c.toDataURL('image/png');
     } catch (e) { return null; }
   };
+  // 从 canvas 往上找"真正能滚的那个祖先"（弹窗内的滚动区往往是它，而非 document）
+  const findScrollContainer = (startEl) => {
+    let el = startEl && startEl.parentElement;
+    while (el && el !== document.body && el !== document.documentElement) {
+      try {
+        const s = getComputedStyle(el);
+        if ((s.overflowY === 'auto' || s.overflowY === 'scroll' || s.overflowY === 'overlay') && el.scrollHeight > el.clientHeight + 4) return el;
+      } catch (e) {}
+      el = el.parentElement;
+    }
+    return null;
+  };
   let container = null;
   if (containerSel) { try { container = document.querySelector(containerSel); } catch (e) {} }
+  if (!container) container = findScrollContainer(pickCanvas());
   if (!container) {
     container = document.querySelector('.resume-detail-wrap, .lib-standard-resume, .dialog-wrap [class*="scroll"], [class*="resume"] [class*="scroll"]')
       || document.scrollingElement || document.documentElement;

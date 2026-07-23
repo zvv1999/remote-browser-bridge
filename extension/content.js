@@ -19,6 +19,21 @@ if (!isConsolePage) {
   console.log('[Bridge Relay] 🔗 检测到控制台页面，启动中继');
   safeSend('relay_log', { msg: '检测到控制台页面，正在连接...' });
   startRelay(BRIDGE_TOKEN);
+
+  // 看门狗：重载扩展会让本页面这份 content.js 的 chrome.runtime 失效、中继静默停掉，
+  // 之前必须手动 ⌘R 控制台页才能用新版重连。这里检测到失效就自动刷新页面重连。
+  // 只在"曾经连上过"之后才触发，避免首次加载竞态导致的刷新循环。
+  let __bridgeWasAlive = false;
+  setInterval(() => {
+    let alive = false;
+    try { alive = !!(chrome.runtime && chrome.runtime.id); } catch (e) { alive = false; }
+    if (alive) {
+      __bridgeWasAlive = true;
+    } else if (__bridgeWasAlive) {
+      console.log('[Relay] 扩展已重载，自动刷新控制台页重连…');
+      try { location.reload(); } catch (e) {}
+    }
+  }, 3000);
 }
 
 // ─── 安全发送消息（容错扩展重载） ───
@@ -74,7 +89,7 @@ function startRelay(token) {
       const res = await fetch(`${baseUrl}/api/connect`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ client: 'chrome-extension-relay', version: '1.16.16', token }),
+        body: JSON.stringify({ client: 'chrome-extension-relay', version: '1.16.23', token }),
       });
       const text = await res.text();
       log('connect 响应: ' + text.substring(0, 200));

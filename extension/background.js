@@ -308,13 +308,15 @@ async function executeAction(action, params) {
     // 主动重载 c-resume iframe，让 document_start 钩子在它重新绘制前装好
     case 'reload_resume_frame':
       return await executeInTab(tab.id, reloadResumeFrame, [], frameId, 'MAIN');
+    // CDP 可信点击：在顶层视口坐标 (x,y) 派发可信 mousePressed/Released（通用能力，用于
+    // canvas 上的热区如"查看全部"，或任何需要 isTrusted=true 的点击）。
+    case 'cdp_click':
+      return await cdpClick(tab.id, Number(params.x), Number(params.y), params);
     // CDP 可信滚动读简历：chrome.debugger 派发可信 mouseWheel 驱动 canvas 逐屏重画，
     // 边滚边把已知偏移写进 __bossResumeScrollTop，钩子据此记录正确 absY，最后重建全文。
-    case 'read_resume_canvas_cdp': {
-      const rf = frameId != null ? frameId : await findResumeFrameId(tab.id);
-      if (rf == null) throw new Error('未找到 c-resume iframe（请先打开候选人在线简历）');
-      return await readResumeCanvasCdp(tab.id, rf, params);
-    }
+    case 'read_resume_canvas_cdp':
+      // reader 已改为主框架聚合、对 frameId 变化免疫；frameId 仅作可选提示
+      return await readResumeCanvasCdp(tab.id, frameId != null ? frameId : null, params);
 
     // ── 通用浏览器操控 ──
     // 关闭弹窗/遮罩层
@@ -1631,6 +1633,37 @@ function canvasDiag() {
   return out;
 }
 
+// CDP 可信点击：把目标标签前台化 → attach → 派发可信 mouseMoved/Pressed/Released（顶层视口坐标）→ detach。
+// 通用 L1 能力：canvas 热区（"查看全部"）、反爬要求 isTrusted 的按钮等。opts: { wait?, doubleClick? }
+async function cdpClick(tabId, x, y, opts) {
+  opts = opts || {};
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  if (!isFinite(x) || !isFinite(y)) throw new Error('cdp_click 需要数字坐标 x/y（顶层视口 CSS 像素）');
+  let prevActiveId = null;
+  try {
+    const t = await chrome.tabs.get(tabId);
+    const [pa] = await chrome.tabs.query({ active: true, windowId: t.windowId });
+    if (pa && pa.id !== tabId) prevActiveId = pa.id;
+    await chrome.tabs.update(tabId, { active: true });
+  } catch (e) {}
+  await chrome.debugger.attach({ tabId }, '1.3');
+  try {
+    await sleep(120);
+    const clicks = opts.doubleClick ? 2 : 1;
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    for (let i = 1; i <= clicks; i++) {
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: i });
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: i });
+      await sleep(40);
+    }
+    await sleep(Number(opts.wait) || 500);
+    return { ok: true, clicked: { x, y }, doubleClick: !!opts.doubleClick };
+  } finally {
+    try { await chrome.debugger.detach({ tabId }); } catch (e) {}
+    try { if (prevActiveId != null) await chrome.tabs.update(prevActiveId, { active: true }); } catch (e) {}
+  }
+}
+
 // 从 webNavigation 帧表里找 c-resume iframe 的 frameId
 async function findResumeFrameId(tabId) {
   try {
@@ -1681,11 +1714,31 @@ async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
   const cx = params.x != null ? Number(params.x) : info.target.x;
   const cy = params.y != null ? Number(params.y) : info.target.y;
 
-  const inFrame = (func, args) => chrome.scripting.executeScript({ target: { tabId, frameIds: [resumeFrameId] }, world: 'MAIN', func, args: args || [] });
-  const setOffset = (v) => inFrame((o) => { window.__bossResumeScrollTop = o; }, [v]);
-  const clearBuf = () => inFrame(() => { if (window.__bossResumeCanvasTexts) window.__bossResumeCanvasTexts.length = 0; return true; });
-  const bufLen = async () => { const r = await inFrame(() => (window.__bossResumeCanvasTexts || []).length); return (r && r[0] && r[0].result) || 0; };
-  const wheel = (dy) => chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: cx, y: cy, deltaX: 0, deltaY: dy, pointerType: 'mouse' });
+  // 全部在主框架(frame 0)执行，内部遍历"自身 + 所有同源子 iframe 的 window"，
+  // 这样对 c-resume iframe 重载 / frameId 变化免疫（不再死盯某个 frameId）。
+  const runMain = (func, args) => chrome.scripting
+    .executeScript({ target: { tabId, frameIds: [0] }, world: 'MAIN', func, args: args || [] })
+    .then((r) => (r && r[0] ? r[0].result : undefined));
+  const setOffset = (v) => runMain((o) => {
+    const ws = [window]; document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) ws.push(f.contentWindow); } catch (e) {} });
+    for (const w of ws) { try { w.__bossResumeScrollTop = o; } catch (e) {} }
+  }, [v]);
+  const clearBuf = () => runMain(() => {
+    const ws = [window]; document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) ws.push(f.contentWindow); } catch (e) {} });
+    for (const w of ws) { try { if (w.__bossResumeCanvasTexts) w.__bossResumeCanvasTexts.length = 0; } catch (e) {} }
+    return true;
+  });
+  const bufLen = () => runMain(() => {
+    let n = 0; const ws = [window]; document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) ws.push(f.contentWindow); } catch (e) {} });
+    for (const w of ws) { try { n += (w.__bossResumeCanvasTexts || []).length; } catch (e) {} }
+    return n;
+  });
+  // 给每条 debugger 命令包超时：单条卡住（如简历中途关闭）不会永远堵死整个中继。
+  const dbgSend = (method, p) => Promise.race([
+    chrome.debugger.sendCommand({ tabId }, method, p),
+    new Promise((r) => setTimeout(() => r(null), 5000)),
+  ]);
+  const wheel = (dy) => dbgSend('Input.dispatchMouseEvent', { type: 'mouseWheel', x: cx, y: cy, deltaX: 0, deltaY: dy, pointerType: 'mouse' });
 
   // Boss 用 rAF 驱动 canvas 重画，后台标签的 rAF 会被暂停 → 可信滚轮改了滚动状态但画面不重画。
   // 所以读取期间把目标标签激活到前台，读完再切回原标签。
@@ -1697,11 +1750,90 @@ async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
     await chrome.tabs.update(tabId, { active: true });
   } catch (e) {}
 
+  // 可信点击（chrome.debugger 已 attach 时用）：点顶层视口坐标
+  const clickAt = async (vx, vy) => {
+    await dbgSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vx, y: vy });
+    await dbgSend('Input.dispatchMouseEvent', { type: 'mousePressed', x: vx, y: vy, button: 'left', clickCount: 1 });
+    await dbgSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x: vx, y: vy, button: 'left', clickCount: 1 });
+  };
+
   await chrome.debugger.attach({ tabId }, '1.3');
   let done = 0, finalOffset = 0;
   const lens = [];
+  let expandClicks = 0; const expandLog = [];
+  const t0 = Date.now();
+  const maxMs = Math.min(150000, Number(params.maxMs) || 95000); // 墙钟兜底：绝不无限跑
   try {
     await sleep(200);
+
+    // ── 展开阶段（expandAll:true 时）：滚一趟，把画布上所有"查看全部"热区可信点击展开 ──
+    // 从 fillText 钩子拿到"查看全部"的画布坐标，换算成顶层视口坐标点击；点开后 inline 展开、
+    // 按钮变"收起"，后续读取即可拿到展开后的完整内容。按绝对位置去重防重复点。
+    if (params.expandAll === true || params.expandAll === 1) {
+      const g = (await runMain(() => {
+        const docs = [document];
+        document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {} });
+        for (const doc of docs) { const c = doc.querySelector('canvas#resume') || doc.querySelector('canvas'); if (c) return { w: c.width, cssW: c.clientWidth, cssH: c.clientHeight }; }
+        return null;
+      })) || {};
+      const DPR = g.cssW ? (g.w / g.cssW) : 2;
+      const ifL = (info.rawRect && info.rawRect.l) || 0;
+      const ifT = (info.rawRect && info.rawRect.t) || 0;
+      const vhCss = g.cssH || 700;
+      const clickedAbs = new Set();
+      for (let k = 0; k < 30; k++) { try { await wheel(-2000); } catch (e) {} await sleep(18); }
+      await sleep(300);
+      let eoff = 0;
+      for (let s = 0; s < maxSteps + 8; s++) {
+        if (Date.now() - t0 > maxMs * 0.5) break; // 展开阶段最多用一半墙钟预算
+        eoff += step;
+        await setOffset(eoff);
+        await clearBuf();
+        try { await wheel(step); } catch (e) {}
+        await sleep(settle);
+        // fillText 逐字画：找"查看全部"必须四字【连续相邻】（各差约一个字宽 ~28device），
+        // 否则会误匹配散落的查/看/全/部（假阳性）。返回"查"左端 x0 与"部"左端 x1，取中心点击。
+        const hits = ((await runMain(() => {
+          const ws = [window]; document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) ws.push(f.contentWindow); } catch (e) {} });
+          let buf = [];
+          for (const w of ws) { try { const b = w.__bossResumeCanvasTexts; if (b && b.length) buf = buf.concat(b); } catch (e) {} }
+          const out = [];
+          const findNext = (ch, y, fromX) => {
+            let best = null, bestDx = 1e9;
+            for (const o of buf) {
+              if (!o || o.text !== ch || Math.abs((o.y || 0) - y) > 4) continue;
+              const dx = o.x - fromX;
+              if (dx > 16 && dx < 46 && dx < bestDx) { bestDx = dx; best = o; }
+            }
+            return best;
+          };
+          for (const c of buf) {
+            if (!c || c.text !== '查') continue;
+            const kan = findNext('看', c.y, c.x); if (!kan) continue;
+            const quan = findNext('全', c.y, kan.x); if (!quan) continue;
+            const bu = findNext('部', c.y, quan.x); if (!bu) continue;
+            // 排除"查看全部N项分析"等链接：正文截断的"查看全部"是行尾（右边没东西），
+            // 分析器链接右边紧跟数字/"项分析"。"部"右侧近处还有字 ⇒ 是链接，跳过。
+            let hasAfter = false;
+            for (const o of buf) { if (o && Math.abs((o.y || 0) - c.y) <= 4 && o.x > bu.x + 16 && o.x < bu.x + 52) { hasAfter = true; break; } }
+            if (hasAfter) continue;
+            out.push({ x0: c.x, x1: bu.x, y: c.y });
+          }
+          return out;
+        })) || []).sort((a, b) => a.y - b.y);
+        for (const h of hits) {
+          const cxCanvas = (h.x0 + h.x1) / 2 + 14; // "查看全部"中心（x1 是"部"左端，+14≈半字）
+          const clickX = Math.round(ifL + cxCanvas / DPR);
+          const clickY = Math.round(ifT + h.y / DPR - 6);  // -6：baseline 上移到文字中线
+          if (clickY < ifT + 4 || clickY > ifT + vhCss - 4) continue; // 只点当前视口内可见的
+          const absKey = Math.round((eoff + h.y / DPR) / 14);
+          if (clickedAbs.has(absKey)) continue;
+          clickedAbs.add(absKey);
+          try { await clickAt(clickX, clickY); expandClicks++; if (expandLog.length < 30) expandLog.push({ x: clickX, y: clickY, abs: eoff + Math.round(h.y / DPR) }); await sleep(500); } catch (e) {}
+        }
+      }
+    }
+
     // 1) 先滚到顶
     for (let k = 0; k < 30; k++) { try { await wheel(-2000); } catch (e) {} await sleep(25); }
     await sleep(350);
@@ -1715,6 +1847,7 @@ async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
     // 3) 逐步向下滚：先写"到位后的偏移"，再派发可信滚轮触发重画
     let offset = 0, lastLen = -1, stagnant = 0;
     for (let i = 0; i < maxSteps; i++) {
+      if (Date.now() - t0 > maxMs) break; // 墙钟兜底
       offset += step;
       await setOffset(offset);
       try { await wheel(step); } catch (e) {}
@@ -1728,9 +1861,8 @@ async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
     }
     await setOffset(0);
     // 4) 用现成同步重建逻辑还原（此时 buffer 里各绘制都带正确偏移）
-    const out = await inFrame(readResumeCanvasSync);
-    const data = (out && out[0] && out[0].result) || {};
-    return Object.assign({ cdp: true, steps: done, finalOffset, step, settle, wheelTarget: { x: cx, y: cy }, mainInfo: info, lens: lens.slice(0, 80) }, data);
+    const data = (await runMain(readResumeCanvasSync)) || {};
+    return Object.assign({ cdp: true, steps: done, finalOffset, step, settle, wheelTarget: { x: cx, y: cy }, mainInfo: info, expandClicks, expandLog, lens: lens.slice(0, 80) }, data);
   } finally {
     try { await chrome.debugger.detach({ tabId }); } catch (e) {}
     try { if (prevActiveId != null) await chrome.tabs.update(prevActiveId, { active: true }); } catch (e) {}

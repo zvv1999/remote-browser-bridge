@@ -1761,14 +1761,14 @@ async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
   let done = 0, finalOffset = 0;
   const lens = [];
   let expandClicks = 0; const expandLog = [];
+  let spotsDbg = null;
   const t0 = Date.now();
   const maxMs = Math.min(150000, Number(params.maxMs) || 95000); // 墙钟兜底：绝不无限跑
   try {
     await sleep(200);
 
-    // ── 展开阶段（expandAll:true 时）：滚一趟，把画布上所有"查看全部"热区可信点击展开 ──
-    // 从 fillText 钩子拿到"查看全部"的画布坐标，换算成顶层视口坐标点击；点开后 inline 展开、
-    // 按钮变"收起"，后续读取即可拿到展开后的完整内容。按绝对位置去重防重复点。
+    // ── 展开阶段（expandAll:true）：先累积滚一趟记录所有"查看全部"热区（带 scrollTop 偏移），
+    // 再逐个滚回其偏移可信点击。累积法不丢帧，比"逐屏即时扫描"稳（后者窄可见窗口 + 异步重画会漏）。
     if (params.expandAll === true || params.expandAll === 1) {
       const g = (await runMain(() => {
         const docs = [document];
@@ -1780,57 +1780,92 @@ async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
       const ifL = (info.rawRect && info.rawRect.l) || 0;
       const ifT = (info.rawRect && info.rawRect.t) || 0;
       const vhCss = g.cssH || 700;
-      const clickedAbs = new Set();
-      for (let k = 0; k < 30; k++) { try { await wheel(-2000); } catch (e) {} await sleep(18); }
-      await sleep(300);
-      let eoff = 0;
-      for (let s = 0; s < maxSteps + 8; s++) {
-        if (Date.now() - t0 > maxMs * 0.5) break; // 展开阶段最多用一半墙钟预算
-        eoff += step;
-        await setOffset(eoff);
-        await clearBuf();
+      // A) 滚到顶 + 清缓冲，然后累积向下滚一趟（每步 setOffset 打标签 → 绘制带 scrollTop）
+      for (let k = 0; k < 30; k++) { try { await wheel(-2000); } catch (e) {} await sleep(16); }
+      await sleep(250);
+      await setOffset(0); await clearBuf();
+      // 顶部先"下一格再回顶"触发 offset 0 重画（页首自我介绍的"查看全部"在这一屏）
+      await setOffset(step); try { await wheel(step); } catch (e) {} await sleep(settle);
+      await setOffset(0); try { await wheel(-step); } catch (e) {} await sleep(settle);
+      let curOff = 0;
+      for (let s = 1; s <= maxSteps + 6; s++) {
+        if (Date.now() - t0 > maxMs * 0.45) break;
+        curOff = s * step;
+        await setOffset(curOff);
         try { await wheel(step); } catch (e) {}
         await sleep(settle);
-        // fillText 逐字画：找"查看全部"必须四字【连续相邻】（各差约一个字宽 ~28device），
-        // 否则会误匹配散落的查/看/全/部（假阳性）。返回"查"左端 x0 与"部"左端 x1，取中心点击。
-        const hits = ((await runMain(() => {
-          const ws = [window]; document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) ws.push(f.contentWindow); } catch (e) {} });
-          let buf = [];
-          for (const w of ws) { try { const b = w.__bossResumeCanvasTexts; if (b && b.length) buf = buf.concat(b); } catch (e) {} }
-          const out = [];
-          const findNext = (ch, y, fromX) => {
-            let best = null, bestDx = 1e9;
-            for (const o of buf) {
-              if (!o || o.text !== ch || Math.abs((o.y || 0) - y) > 4) continue;
-              const dx = o.x - fromX;
-              if (dx > 16 && dx < 46 && dx < bestDx) { bestDx = dx; best = o; }
-            }
-            return best;
-          };
-          for (const c of buf) {
-            if (!c || c.text !== '查') continue;
-            const kan = findNext('看', c.y, c.x); if (!kan) continue;
-            const quan = findNext('全', c.y, kan.x); if (!quan) continue;
-            const bu = findNext('部', c.y, quan.x); if (!bu) continue;
-            // 排除"查看全部N项分析"等链接：正文截断的"查看全部"是行尾（右边没东西），
-            // 分析器链接右边紧跟数字/"项分析"。"部"右侧近处还有字 ⇒ 是链接，跳过。
-            let hasAfter = false;
-            for (const o of buf) { if (o && Math.abs((o.y || 0) - c.y) <= 4 && o.x > bu.x + 16 && o.x < bu.x + 52) { hasAfter = true; break; } }
-            if (hasAfter) continue;
-            out.push({ x0: c.x, x1: bu.x, y: c.y });
+      }
+      // 从累积缓冲里找所有"查看全部"热区（同一 scrollTop 内四字连续相邻 + 排除分析器链接）
+      const spotsR = (await runMain((DPRv) => {
+        const ws = [window]; document.querySelectorAll('iframe').forEach((f) => { try { if (f.contentWindow) ws.push(f.contentWindow); } catch (e) {} });
+        let buf = [];
+        for (const w of ws) { try { const b = w.__bossResumeCanvasTexts; if (b && b.length) buf = buf.concat(b); } catch (e) {} }
+        const findNext = (ch, y, st, fromX) => {
+          let best = null, bestDx = 1e9;
+          for (const o of buf) {
+            if (!o || o.text !== ch || (o.scrollTop || 0) !== st || Math.abs((o.y || 0) - y) > 4) continue;
+            const dx = o.x - fromX;
+            if (dx > 6 && dx < 22 && dx < bestDx) { bestDx = dx; best = o; } // 字距实测 ~14px
           }
-          return out;
-        })) || []).sort((a, b) => a.y - b.y);
-        for (const h of hits) {
-          const cxCanvas = (h.x0 + h.x1) / 2 + 14; // "查看全部"中心（x1 是"部"左端，+14≈半字）
-          const clickX = Math.round(ifL + cxCanvas / DPR);
-          const clickY = Math.round(ifT + h.y / DPR - 6);  // -6：baseline 上移到文字中线
-          if (clickY < ifT + 4 || clickY > ifT + vhCss - 4) continue; // 只点当前视口内可见的
-          const absKey = Math.round((eoff + h.y / DPR) / 14);
-          if (clickedAbs.has(absKey)) continue;
-          clickedAbs.add(absKey);
-          try { await clickAt(clickX, clickY); expandClicks++; if (expandLog.length < 30) expandLog.push({ x: clickX, y: clickY, abs: eoff + Math.round(h.y / DPR) }); await sleep(500); } catch (e) {}
+          return best;
+        };
+        const raw = [];
+        for (const c of buf) {
+          if (!c || c.text !== '查') continue;
+          const st = c.scrollTop || 0;
+          const kan = findNext('看', c.y, st, c.x); if (!kan) continue;
+          const quan = findNext('全', c.y, st, kan.x); if (!quan) continue;
+          const bu = findNext('部', c.y, st, quan.x); if (!bu) continue;
+          let hasAfter = false;
+          for (const o of buf) { if (o && (o.scrollTop || 0) === st && Math.abs((o.y || 0) - c.y) <= 4 && o.x > bu.x + 6 && o.x < bu.x + 22) { hasAfter = true; break; } }
+          if (hasAfter) continue;
+          raw.push({ cx: (c.x + bu.x) / 2 + 7, y: c.y, st: st, abs: st + c.y / DPRv });
         }
+        // 按绝对位置去重，每个热区选 y 最居中的一份（点击更稳）
+        const byAbs = {};
+        for (const r of raw) {
+          const key = Math.round(r.abs / 16);
+          const prev = byAbs[key];
+          if (!prev || Math.abs(r.y / DPRv - 350) < Math.abs(prev.y / DPRv - 350)) byAbs[key] = r;
+        }
+        // 调试：统计 查/看/全/部 数量 + 采样"查"及其同 scrollTop 邻近的看/全/部（诊断相邻匹配为何失败）
+        const cnt = { 查: 0, 看: 0, 全: 0, 部: 0 };
+        const chaSamples = [];
+        for (const o of buf) { if (o && cnt[o.text] != null) cnt[o.text]++; }
+        for (const c of buf) {
+          if (!c || c.text !== '查' || chaSamples.length >= 6) continue;
+          const st = c.scrollTop || 0;
+          const nbrs = [];
+          for (const o of buf) {
+            if (!o || (o.scrollTop || 0) !== st || Math.abs((o.y || 0) - c.y) > 6) continue;
+            if (o.x >= c.x - 4 && o.x < c.x + 130 && '查看全部'.indexOf(o.text) >= 0) nbrs.push({ t: o.text, dx: Math.round(o.x - c.x) });
+          }
+          nbrs.sort((a, b) => a.dx - b.dx);
+          chaSamples.push({ x: Math.round(c.x), y: Math.round(c.y), st, nbrs: nbrs.slice(0, 8) });
+        }
+        return { list: Object.keys(byAbs).map((k) => byAbs[k]).sort((a, b) => a.st - b.st), dbg: { cnt, chaSamples, rawHits: raw.length } };
+      }, [DPR])) || {};
+      spotsDbg = spotsR.dbg || null;
+      const spots = spotsR.list || [];
+      // B) 逐个滚回其偏移并可信点击（自上而下；展开会下移，故先点上面的）
+      const scrollTo = async (target) => {
+        let guard = 0;
+        while (Math.abs(target - curOff) > step && guard++ < 90) {
+          const dir = target > curOff ? 1 : -1;
+          try { await wheel(dir * step); } catch (e) {}
+          curOff += dir * step;
+          await sleep(80);
+        }
+        await setOffset(target); curOff = target;
+        await sleep(settle);
+      };
+      for (const sp of spots) {
+        if (Date.now() - t0 > maxMs * 0.85) break;
+        await scrollTo(sp.st);
+        const clickX = Math.round(ifL + sp.cx / DPR);
+        const clickY = Math.round(ifT + sp.y / DPR - 6);
+        if (clickY < ifT + 4 || clickY > ifT + vhCss - 4) continue;
+        try { await clickAt(clickX, clickY); expandClicks++; if (expandLog.length < 30) expandLog.push({ x: clickX, y: clickY, st: sp.st }); await sleep(600); } catch (e) {}
       }
     }
 
@@ -1862,7 +1897,7 @@ async function readResumeCanvasCdp(tabId, resumeFrameId, params) {
     await setOffset(0);
     // 4) 用现成同步重建逻辑还原（此时 buffer 里各绘制都带正确偏移）
     const data = (await runMain(readResumeCanvasSync)) || {};
-    return Object.assign({ cdp: true, steps: done, finalOffset, step, settle, wheelTarget: { x: cx, y: cy }, mainInfo: info, expandClicks, expandLog, lens: lens.slice(0, 80) }, data);
+    return Object.assign({ cdp: true, steps: done, finalOffset, step, settle, wheelTarget: { x: cx, y: cy }, mainInfo: info, expandClicks, expandLog, spotsDbg, lens: lens.slice(0, 80) }, data);
   } finally {
     try { await chrome.debugger.detach({ tabId }); } catch (e) {}
     try { if (prevActiveId != null) await chrome.tabs.update(prevActiveId, { active: true }); } catch (e) {}

@@ -211,6 +211,19 @@ const TOOLS = [
     },
   },
   {
+    name: 'browser_read_boss_resume',
+    description: '一步读取当前已打开的 Boss 在线简历，返回**结构化字段**（姓名/年龄/学历/期望职位/薪资/工作经历/教育/技能等）+ 全文。' +
+      '底层 CDP 可信滚动，完整、零 OCR。用法：打开候选人在线简历弹窗 → 调本工具。' +
+      'expandAll=true 会额外点开"查看全部"截断内容（较慢，best-effort）。',
+    inputSchema: { type: 'object', properties: { expandAll: { type: 'boolean', description: '是否点开"查看全部"截断内容，默认 false' } } },
+    run: async (a) => {
+      await connectBridge();
+      const r = await bridge.readBossResume({ expandAll: !!a.expandAll });
+      if (!r.text) return text('未读到简历。请确认已打开候选人在线简历弹窗，且扩展 ≥1.16.14 并已授予 debugger 权限。');
+      return text(JSON.stringify({ fields: r.fields, meta: r.meta, text: r.text }, null, 2));
+    },
+  },
+  {
     name: 'browser_read_canvas',
     description: '把当前页面（或指定 frame）里已渲染的 <canvas> 导出为 PNG 图片返回，供你直接“看”并 OCR。' +
       '适合用 canvas 绘制正文/简历的页面 —— 这类页面 DOM 里没有文字，browser_read_text 拿不到。可传 selector / frameId。',

@@ -186,13 +186,16 @@ Claude Code 命令行也可：`claude mcp add browser -- node /绝对路径/remo
 有些页面把正文画在 `<canvas>` 上、DOM 里没有文字（反爬），且滚动是 JS 拦截滚轮直接重画、没有 DOM 滚动。这种页面用 **CDP 可信滚动**读结构化全文（比 OCR 准、零 OCR）：
 
 1. 打开候选人的**在线简历弹窗**（会加载 `c-resume` iframe）
-2. 直接调用（三选一）：
-   - **MCP**：`browser_read_canvas_text`（默认走 CDP，无需参数）
-   - **runner**：`await bridge.readResumeCanvasCdp()`
-   - **原始 action**：`read_resume_canvas_cdp`
-3. 拿到从页首到页尾的完整结构化文本
+2. 直接调用 —— **推荐用封装好的稳定工具**（一步拿"结构化字段 + 全文"）：
+   - **CLI**：`node examples/read-boss-resume.js`（`--expand` 顺便展开"查看全部"，`--fields` 只要字段）
+   - **库/程序**：`const { text, fields } = await bridge.readBossResume()`（`server/runner.js` 导出 `Bridge` + `parseBossResume`）
+   - **MCP（给 agent）**：`browser_read_boss_resume` → 返回 `{ fields, text }`
+   - 只要纯文本：`browser_read_canvas_text` / `await bridge.readResumeCanvasCdp()` / action `read_resume_canvas_cdp`
+3. 拿到从页首到页尾的完整简历。`fields` 含 `name/age/education/status/expectedPosition/expectedSalary/sections`。
 
 **无需**预装钩子、传 frameId、手动滚动。读取时本地 Chrome 会短暂显示调试横幅、简历自动滚动几秒（读完自动恢复）。
+
+> **自动化建议（程序驱动、不经 agent）**：把浏览器机械操作（读简历）当成 `bridge.readBossResume()` 这种硬函数调用，业务判断（是否合适、回什么）留给你自己的脚本或规则；Boss 风控敏感，动作间加**随机延时、避免反复重载页面、限速**（拟人化）。
 
 排错：
 - 读到空/乱码 → `browser_canvas_diag` 看 `hookInstalled` / `capturedDraws`；确认扩展是 **1.16.16+**（含 `canvas-hook.js` + `debugger` 权限）且权限已授予。

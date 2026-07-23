@@ -65,6 +65,43 @@ ${rows || '<div class="sub">（无记录）</div>'}
 </body></html>`;
 }
 
+// 把 canvas 简历重建文本做轻量结构化解析（best-effort：布局规整所以够用；拿不准就直接用 text）。
+function parseBossResume(text) {
+  const t = String(text || '');
+  const lines = t.split('\n').map((s) => s.trim()).filter(Boolean);
+  const first = lines[0] || '';
+  const name = first.replace(/(刚刚活跃|在线|\d+分钟前活跃|\d+小时前活跃|今日活跃|活跃).*$/, '').trim() || first;
+  const ageM = t.match(/(\d{1,2})岁/);
+  const eduM = t.match(/(博士|硕士|本科|大专|专科|高中|中专|初中)/);
+  const status = t.match(/(应届生|在职|离职中?|离校|随时到岗|\d+月内到岗|周内到岗)/g) || [];
+  let expect = null;
+  const expM = t.match(/期望职位[：: ]*([^\n]{0,60})/) || t.match(/期望[：: ]*([^\n]{0,60})/);
+  if (expM) expect = expM[1].trim();
+  const salaryM = t.match(/(\d{1,3}(?:\.\d)?[-~]\d{1,3}(?:\.\d)?[KkWw])/);
+  // 分区：按已知标题切
+  const HEADERS = ['工作经历', '项目经验', '项目经历', '教育经历', '教育背景', '专业技能', '技能特长', '自我评价', '荣誉证书', '资格证书', '语言能力'];
+  const idxs = [];
+  for (const h of HEADERS) { const i = t.indexOf(h); if (i >= 0) idxs.push({ h, i }); }
+  idxs.sort((a, b) => a.i - b.i);
+  const sections = {};
+  for (let k = 0; k < idxs.length; k++) {
+    const start = idxs[k].i + idxs[k].h.length;
+    const end = k + 1 < idxs.length ? idxs[k + 1].i : t.length;
+    sections[idxs[k].h] = t.slice(start, end).replace(/[ \t]+/g, '').trim().slice(0, 4000);
+  }
+  return {
+    name,
+    age: ageM ? Number(ageM[1]) : null,
+    education: eduM ? eduM[1] : null,
+    status,
+    expectedPosition: expect,
+    expectedSalary: salaryM ? salaryM[1] : null,
+    sections,
+    // 若为 true 说明还有"查看全部"截断内容未展开，建议 readBossResume({expandAll:true}) 重读
+    hasTruncation: t.includes('查看全部'),
+  };
+}
+
 class Bridge {
   constructor(opts = {}) {
     this.host = opts.host || '127.0.0.1';
@@ -585,14 +622,35 @@ class Bridge {
   async readResumeCanvasCdp(opts = {}) {
     const maxSteps = opts.maxSteps || 50;
     const settle = opts.settle || 240;
-    const timeout = (maxSteps + 35) * settle + 30000; // 含滚到顶 + 各步等待的宽裕预算
+    const expandFactor = opts.expandAll ? 2.2 : 1; // 展开阶段会再滚一趟
+    const timeout = Math.round(((maxSteps + 35) * settle) * expandFactor + 40000);
     return this.exec('read_resume_canvas_cdp', {
       ...(opts.step != null ? { step: opts.step } : {}),
       maxSteps, settle,
+      ...(opts.expandAll ? { expandAll: true } : {}),
+      ...(opts.maxMs != null ? { maxMs: opts.maxMs } : {}),
       ...(opts.x != null ? { x: opts.x } : {}),
       ...(opts.y != null ? { y: opts.y } : {}),
       ...(opts.frameId != null ? { frameId: opts.frameId } : {}),
     }, timeout);
+  }
+
+  // ★ 稳定工具：读取当前已打开的候选人在线简历，返回 { text, fields, meta }。
+  // 底层用 CDP 可信滚动（完整、零 OCR）。opts: { expandAll?=false, step?, maxSteps?, settle?, maxMs? }
+  // 前置：简历弹窗已打开（可先用 openBossResume() 或人工打开）。
+  async readBossResume(opts = {}) {
+    const r = await this.readResumeCanvasCdp(opts);
+    const text = (r && r.reconstructedText) || '';
+    return {
+      text,
+      fields: parseBossResume(text),
+      meta: {
+        drawCalls: (r && r.drawCallsCount) || 0,
+        steps: (r && r.steps) || 0,
+        expandClicks: (r && r.expandClicks) || 0,
+        chars: text.length,
+      },
+    };
   }
 
   // 诊断：canvas 渲染方式 / 钩子是否生效 / 截到多少绘制。opts: { frameId? }
@@ -884,4 +942,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { Bridge };
+module.exports = { Bridge, parseBossResume };
